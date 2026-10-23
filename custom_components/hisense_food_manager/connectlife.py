@@ -45,6 +45,9 @@ class ConnectLifeFoodClient:
     _UPDATE_SHOPPING_PATH = "fridge/updateShoppingList"
     _RESET_SHOPPING_PATH = "fridge/resetShoppingList"
     _DELETE_SHOPPING_PATH = "fridge/delShoppingList"
+    _ADD_INVENTORY_PATH = "fridge/pu/add_fridge_food"
+    _UPDATE_INVENTORY_PATH = "fridge/pu/update_fridge_food"
+    _DELETE_INVENTORY_PATH = "fridge/pu/delete_fridge_food"
     _AUTHORIZE_UID_PATH = "account/acc/authorize_uid"
     _ANDROID_ANONYMOUS_LOGIN_PATH = "account/acc/login_pwd"
     _ANDROID_TOKEN_SIGN_IN_PATH = "account/acc/token_sign_in"
@@ -517,6 +520,124 @@ class ConnectLifeFoodClient:
         rows = self._inventory_rows(data)
         return [item for row in rows if (item := self._inventory_from_row(row))]
 
+    async def async_inventory_rows(self) -> list[dict[str, Any]]:
+        """Return raw inventory DTOs with inherited room information.
+
+        This stays internal to the integration: services return normalized data
+        only, while writes need the vendor's room IDs and food metadata.
+        """
+        return self._inventory_rows(await self._async_get(self._INVENTORY_PATH))
+
+    @classmethod
+    def _inventory_write_payload(
+        cls, item: InventoryItem, *, room: dict[str, Any], food: dict[str, Any] | None = None,
+        existing: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build the field set used by Android's FridgeFoodModel DTO.
+
+        ``food`` supplies library metadata for recognised products; custom
+        names deliberately omit ``foodId``. Existing records retain server
+        fields required by the update endpoint.
+        """
+        source = {**(food or {}), **(existing or {})}
+        payload = {
+            "foodId": source.get("foodId"),
+            "foodName": source.get("foodName") or item.name,
+            "commonName": source.get("commonName") or item.name,
+            "cusFoodName": item.name,
+            "foodNum": item.quantity,
+            "foodUnitId": source.get("foodUnitId") or source.get("defaultUnitId"),
+            "foodUnitCode": item.unit or source.get("foodUnitCode"),
+            "roomId": room.get("roomId"),
+            "roomCode": room.get("roomCode"),
+            "invalidTime": item.best_before or source.get("invalidTime"),
+            "foodSaveDate": source.get("foodSaveDate"),
+            "enteringSource": source.get("enteringSource", 0),
+        }
+        if existing and existing.get("fridgeFoodId") is not None:
+            payload["fridgeFoodId"] = existing["fridgeFoodId"]
+        return {key: value for key, value in payload.items() if value is not None}
+
+    @classmethod
+    def _room_for_zone(cls, rows: list[dict[str, Any]], zone: FoodZone) -> dict[str, Any]:
+        for row in rows:
+            if cls._zone(row.get("roomCode")) == zone and row.get("roomId") is not None:
+                return {"roomId": row["roomId"], "roomCode": row.get("roomCode")}
+        raise ApiContractUnavailable(f"ConnectLife has no usable room for {zone.value}")
+
+    async def async_add_inventory_item(self, item: InventoryItem) -> dict[str, Any]:
+        """Add a Grocy item to the mapped ConnectLife refrigerator zone."""
+        rows = await self.async_inventory_rows()
+        room = self._room_for_zone(rows, item.zone)
+        catalog_food = next(
+            (
+                food for genre in await self.async_catalog()
+                for food in genre.get("foods", [])
+                if normalized_name(str(food.get("foodName") or "")) == normalized_name(item.name)
+            ),
+            None,
+        )
+        payload = self._inventory_write_payload(item, room=room, food=catalog_food)
+        await self._async_write(self._ADD_INVENTORY_PATH, payload)
+        after = await self.async_inventory_rows()
+        matches = [
+            row for row in after
+            if normalized_name(str(row.get("cusFoodName") or row.get("commonName") or row.get("foodName") or ""))
+            == normalized_name(item.name)
+            and self._zone(row.get("roomCode")) == item.zone
+        ]
+        if not matches:
+            raise ApiContractUnavailable(f"ConnectLife did not return added inventory item: {item.name}")
+        created = matches[-1]
+        return {
+            "name": item.name,
+            "zone": item.zone.value,
+            "fridge_food_id": str(created.get("fridgeFoodId") or created.get("foodId") or ""),
+        }
+
+    async def async_delete_inventory_item(self, fridge_food_id: str) -> dict[str, Any]:
+        """Delete one inventory record and verify that its exact ID vanished."""
+        await self._async_write(self._DELETE_INVENTORY_PATH, {"fridgeFoodIds": [fridge_food_id]})
+        rows = await self.async_inventory_rows()
+        if any(str(row.get("fridgeFoodId") or row.get("foodId") or "") == fridge_food_id for row in rows):
+            raise ApiContractUnavailable(f"ConnectLife still returned inventory item {fridge_food_id}")
+        return {"deleted": fridge_food_id, "verified": True}
+
+    async def async_sync_inventory_from_grocy(self, items: list[InventoryItem]) -> dict[str, Any]:
+        """Add Grocy stock missing from the mapped ConnectLife zones.
+
+        Existing user records are left untouched until update and conflict
+        semantics are independently validated. This makes the first reverse
+        synchronization safe and idempotent.
+        """
+        existing = await self.async_inventory_items()
+        existing_keys = {(normalized_name(item.name), item.zone) for item in existing}
+        added: list[str] = []
+        skipped: list[str] = []
+        for item in items:
+            key = (normalized_name(item.name), item.zone)
+            if key in existing_keys:
+                skipped.append(item.name)
+                continue
+            await self.async_add_inventory_item(item)
+            existing_keys.add(key)
+            added.append(item.name)
+        return {"added": added, "added_count": len(added), "skipped_existing": skipped,
+                "skipped_count": len(skipped)}
+
+    async def async_test_inventory_roundtrip(self) -> dict[str, Any]:
+        """Create and remove one clearly-labelled refrigerator test item."""
+        item = InventoryItem("[HA test] Grocy ConnectLife Sync inventory", FoodZone.FRIDGE, 1)
+        created = await self.async_add_inventory_item(item)
+        identifier = created["fridge_food_id"]
+        if not identifier:
+            raise ApiContractUnavailable("ConnectLife returned no ID for the temporary inventory item")
+        try:
+            verified_added = True
+        finally:
+            await self.async_delete_inventory_item(identifier)
+        return {"created": created, "verified_added": verified_added, "verified_deleted": True}
+
     async def async_catalog(self) -> list[dict[str, Any]]:
         api, gateway_base_url, refrigerator = await self._async_api_and_refrigerator()
         data = await api._request_gateway_json(  # noqa: SLF001
@@ -731,7 +852,7 @@ class ConnectLifeFoodClient:
         foods = value.get("fridgeFoods")
         if isinstance(foods, list):
             return [
-                {**food, "roomCode": food.get("roomCode", room)}
+                {**food, "roomCode": food.get("roomCode") or room}
                 for food in foods if isinstance(food, dict)
             ]
         return [row for child in value.values() for row in cls._inventory_rows(child, room)]

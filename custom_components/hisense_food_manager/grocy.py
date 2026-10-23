@@ -2,6 +2,7 @@
 from __future__ import annotations
 from urllib.parse import urljoin
 from typing import TYPE_CHECKING
+import asyncio
 
 if TYPE_CHECKING:
     import aiohttp
@@ -23,11 +24,15 @@ class GrocyClient:
         return await self._request("GET", "/api/system/info")
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
-        async with self._session.request(method, self._url(path), headers=self._headers, **kwargs) as response:
-            if response.status >= 400:
-                detail = (await response.text())[:300]
-                raise GrocyError(f"Grocy returned HTTP {response.status}: {detail}")
-            return await response.json()
+        try:
+            async with asyncio.timeout(15):
+                async with self._session.request(method, self._url(path), headers=self._headers, **kwargs) as response:
+                    if response.status >= 400:
+                        detail = (await response.text())[:300]
+                        raise GrocyError(f"Grocy returned HTTP {response.status}: {detail}")
+                    return await response.json()
+        except TimeoutError as err:
+            raise GrocyError(f"Grocy request timed out after 15 seconds: {method} {path}") from err
 
     @staticmethod
     def inventory_payload(item: InventoryItem, product_id: int, location_id: int) -> dict:
@@ -170,6 +175,114 @@ class GrocyClient:
                             "location": location_name})
         return {"created": created, "created_count": len(created),
                 "skipped_existing": skipped, "skipped_count": len(skipped)}
+
+    async def async_inventory_items(self) -> list[InventoryItem]:
+        """Read stock that belongs to one of the mapped refrigerator locations.
+
+        Grocy products can exist in several locations, therefore stock rows are
+        the source of truth for the location and quantity, not a product's
+        default location. Rows outside the three mapped locations are never
+        exposed to ConnectLife.
+        """
+        products, locations, stock, units = await asyncio.gather(
+            self.async_list("products"), self.async_list("locations"),
+            self._request("GET", "/api/stock"), self.async_list("quantity_units"),
+        )
+        product_by_id = {
+            int(row["id"]): row for row in products
+            if row.get("id") is not None and row.get("name")
+        }
+        unit_by_id = {
+            int(row["id"]): str(row["name"]) for row in units
+            if row.get("id") is not None and row.get("name")
+        }
+        zone_by_location_id = {
+            int(row["id"]): zone
+            for zone in FoodZone
+            for row in locations
+            if row.get("id") is not None and row.get("name") == self.location_name(zone)
+        }
+        items: list[InventoryItem] = []
+        for row in stock if isinstance(stock, list) else []:
+            product_id = row.get("product_id")
+            location_id = row.get("location_id")
+            if product_id is None or location_id is None:
+                continue
+            product = product_by_id.get(int(product_id))
+            zone = zone_by_location_id.get(int(location_id))
+            if product is None or zone is None:
+                continue
+            try:
+                quantity = float(row.get("amount", 0))
+            except (TypeError, ValueError):
+                continue
+            if quantity <= 0:
+                continue
+            items.append(InventoryItem(
+                name=str(product["name"]), zone=zone, quantity=quantity,
+                unit=unit_by_id.get(product.get("qu_id_stock")),
+                best_before=row.get("best_before_date") or None,
+                vendor_id=f"{product_id}:{location_id}",
+            ))
+        return items
+
+    async def async_sync_inventory_from_connectlife(self, items: list[InventoryItem]) -> dict:
+        """Make mapped Grocy stock match a ConnectLife inventory snapshot.
+
+        This only touches the three mapped refrigerator locations. Products in
+        every other Grocy location stay untouched. The operation is idempotent:
+        an unchanged snapshot produces no stock write.
+        """
+        products, locations, units, stock = await asyncio.gather(
+            self.async_list("products"), self.async_list("locations"),
+            self.async_list("quantity_units"), self._request("GET", "/api/stock"),
+        )
+        if not units:
+            raise GrocyError("Grocy has no quantity units")
+        location_by_name = {
+            str(row.get("name")): int(row["id"]) for row in locations if row.get("id") is not None
+        }
+        product_by_name = {
+            normalized_name(str(row.get("name", ""))): int(row["id"])
+            for row in products if row.get("id") is not None and row.get("name")
+        }
+        amounts = {
+            (int(row["product_id"]), int(row["location_id"])): float(row.get("amount") or 0)
+            for row in stock if isinstance(row, dict)
+            and row.get("product_id") is not None and row.get("location_id") is not None
+        }
+        created: list[str] = []
+        updated: list[str] = []
+        unchanged: list[str] = []
+        for item in items:
+            location_name = self.location_name(item.zone)
+            location_id = location_by_name.get(location_name)
+            if location_id is None:
+                raise GrocyError(f"Grocy location is missing: {location_name}")
+            key = normalized_name(item.name)
+            product_id = product_by_name.get(key)
+            if product_id is None:
+                product_id = await self.async_create("products", {
+                    "name": item.name, "location_id": location_id,
+                    "qu_id_purchase": units[0]["id"], "qu_id_stock": units[0]["id"],
+                    "min_stock_amount": 0,
+                })
+                product_by_name[key] = product_id
+                created.append(item.name)
+            current = amounts.get((product_id, location_id), 0)
+            if current == item.quantity:
+                unchanged.append(item.name)
+                continue
+            await self._request("POST", f"/api/stock/products/{product_id}/inventory", json={
+                "new_amount": item.quantity, "location_id": location_id,
+            })
+            amounts[(product_id, location_id)] = item.quantity
+            updated.append(item.name)
+        return {
+            "created": created, "created_count": len(created),
+            "updated": updated, "updated_count": len(updated),
+            "unchanged": unchanged, "unchanged_count": len(unchanged),
+        }
 
     async def async_inventory_sync_plan(self, items: list[InventoryItem]) -> dict:
         """Describe the Grocy work needed for fridge inventory without writing."""

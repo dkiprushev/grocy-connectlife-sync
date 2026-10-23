@@ -15,6 +15,11 @@ from .const import (CONF_GROCY_API_KEY, CONF_GROCY_URL, DOMAIN, SERVICE_PROBE_FO
 from .const import CONF_CONNECTLIFE_PASSWORD, CONF_CONNECTLIFE_USERNAME
 from .const import SERVICE_TEST_CONNECTLIFE_SHOPPING_ROUNDTRIP, SERVICE_DELETE_CONNECTLIFE_SHOPPING_TEST
 from .const import SERVICE_SYNC_GROCY_SHOPPING_TO_CONNECTLIFE
+from .const import (
+    SERVICE_SYNC_CONNECTLIFE_INVENTORY_TO_GROCY,
+    SERVICE_SYNC_GROCY_INVENTORY_TO_CONNECTLIFE,
+    SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP,
+)
 from .grocy import GrocyClient
 
 if TYPE_CHECKING:
@@ -138,6 +143,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN, SERVICE_SYNC_GROCY_SHOPPING_TO_CONNECTLIFE,
             sync_grocy_shopping_to_connectlife, supports_response="only",
         )
+        async def sync_connectlife_inventory_to_grocy(call: ServiceCall) -> dict:
+            items = await ConnectLifeFoodClient(hass).async_inventory_items()
+            return await grocy_client().async_sync_inventory_from_connectlife(items)
+        hass.services.async_register(
+            DOMAIN, SERVICE_SYNC_CONNECTLIFE_INVENTORY_TO_GROCY,
+            sync_connectlife_inventory_to_grocy, supports_response="only",
+        )
+        async def sync_grocy_inventory_to_connectlife(call: ServiceCall) -> dict:
+            items = await grocy_client().async_inventory_items()
+            return await ConnectLifeFoodClient(hass).async_sync_inventory_from_grocy(items)
+        hass.services.async_register(
+            DOMAIN, SERVICE_SYNC_GROCY_INVENTORY_TO_CONNECTLIFE,
+            sync_grocy_inventory_to_connectlife, supports_response="only",
+        )
+        async def test_connectlife_inventory_roundtrip(call: ServiceCall) -> dict:
+            return await ConnectLifeFoodClient(hass).async_test_inventory_roundtrip()
+        hass.services.async_register(
+            DOMAIN, SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP,
+            test_connectlife_inventory_roundtrip, supports_response="only",
+        )
     return True
 
 
@@ -164,4 +189,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_IMPORT_SHOPPING_TO_GROCY)
         hass.services.async_remove(DOMAIN, SERVICE_TEST_CONNECTLIFE_SHOPPING_ROUNDTRIP)
         hass.services.async_remove(DOMAIN, SERVICE_SYNC_GROCY_SHOPPING_TO_CONNECTLIFE)
+        hass.services.async_remove(DOMAIN, SERVICE_SYNC_CONNECTLIFE_INVENTORY_TO_GROCY)
+        hass.services.async_remove(DOMAIN, SERVICE_SYNC_GROCY_INVENTORY_TO_CONNECTLIFE)
+        hass.services.async_remove(DOMAIN, SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP)
     return True

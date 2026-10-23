@@ -30,6 +30,14 @@ class ConnectLifeModelTests(unittest.TestCase):
         self.assertEqual(ConnectLifeFoodClient._inventory_from_row(rows[0]).zone, FoodZone.FREEZER)
         self.assertEqual(ConnectLifeFoodClient._inventory_from_row(rows[1]).zone, FoodZone.MY_FRESH_CHOICE)
 
+    def test_inventory_rows_inherit_room_when_food_dto_contains_null_room_code(self):
+        rows = ConnectLifeFoodClient._inventory_rows({"fridgeRooms": [
+            {"roomCode": "refrigerator", "roomId": 2, "fridgeFoods": [
+                {"foodId": 1, "foodName": "Milk", "roomCode": None},
+            ]},
+        ]})
+        self.assertEqual(rows[0]["roomCode"], "refrigerator")
+
     def test_shopping_row_is_normalized(self):
         item = ConnectLifeFoodClient._shopping_from_row({"foodName": "Яблоки", "num": 3, "checked": 1, "id": 7})
         self.assertEqual(item.name, "Яблоки")
