@@ -1,38 +1,129 @@
 # Grocy ConnectLife Sync
 
-This is a custom Home Assistant integration that connects a ConnectLife refrigerator with Grocy. It treats the mapped physical location, not a product name or category, as the decision to synchronise: face masks in `Fridge` belong in the refrigerator, while electrical tape in `Storage` stays Grocy-only.
+Custom Home Assistant integration that connects the food-management part of a
+ConnectLife refrigerator with [Grocy](https://grocy.info/). It is designed as
+one integration with two independent synchronization domains:
 
-## Current capability
+1. a shared shopping list;
+2. refrigerator inventory.
 
-- typed, vendor-neutral models for shopping-list and refrigerator inventory items;
-- a deterministic mapping between ConnectLife food zones and Grocy locations;
-- a minimal Grocy REST client, using an API key supplied through a config flow instead of `secrets.yaml` or `.storage` edits;
-- explicit ConnectLife API route registry and diagnostics contract.
+The integration is intentionally not limited to food names or Grocy product
+categories. A **physical Grocy location** decides whether an item belongs in
+the refrigerator. For example, face masks stored in `Fridge` should be
+synchronized with the refrigerator, while electrical tape stored in `Storage`
+must remain Grocy-only.
 
-## Deliberately not implemented yet
+> The project name is **Grocy ConnectLife Sync**. Its technical Home Assistant
+> domain remains `hisense_food_manager` for compatibility with existing config
+> entries.
 
-The ConnectLife Android application contains the routes needed for food manager features, but the exact signed request body for this refrigerator account has not been observed. The client therefore refuses to write rather than guessing a payload. The next milestone is a read-only authenticated contract probe using credentials entered by the owner in the HA config flow; it will not alter ConnectLife or Grocy data.
+## What is synchronized
 
-## Proposed installation diff (not applied)
+### Shopping lists
 
-```diff
-+ /config/custom_components/hisense_food_manager/__init__.py
-+ /config/custom_components/hisense_food_manager/manifest.json
-+ /config/custom_components/hisense_food_manager/config_flow.py
-+ /config/custom_components/hisense_food_manager/grocy.py
-+ /config/custom_components/hisense_food_manager/connectlife.py
-+ /config/custom_components/hisense_food_manager/models.py
+One explicitly selected Grocy shopping list is paired with one explicitly
+selected ConnectLife shopping list.
+
+```text
+Grocy shopping list  <-------------------->  ConnectLife shopping list
 ```
 
-No YAML, `.storage`, or `secrets.yaml` change is proposed. Installation will require an explicit Home Assistant restart because custom integrations are loaded at startup.
+This is a planning flow: an item on a shopping list is not automatically stock
+in a refrigerator. It may be food, household goods, or anything else.
 
-## Intended location mapping
+### Inventory
 
-| Grocy location | ConnectLife zone |
+Refrigerator inventory is paired only with selected physical locations in
+Grocy:
+
+```text
+Grocy stock in mapped locations  <-------->  ConnectLife refrigerator inventory
+```
+
+The initial conventional mapping is:
+
+| Grocy location | ConnectLife zone | Included in refrigerator inventory sync |
+| --- | --- | --- |
+| `Fridge` | Refrigerator | Yes |
+| `Freezer` | Freezer | Yes |
+| `My Fresh Choice` | My Fresh Choice | Yes |
+| Any other location, for example `Storage` | — | No — Grocy-only |
+
+The intended production configuration will make the mapped locations explicit
+in the integration settings, rather than infer food from a product name.
+
+## Bidirectional synchronization rules
+
+Both domains are intended to be bidirectional:
+
+| Direction | Intended behavior |
 | --- | --- |
-| `Fridge` | Refrigerator |
-| `Freezer` | Freezer |
-| `My Fresh Choice` | My Fresh Choice |
+| ConnectLife shopping list → Grocy | Add or update the corresponding item in the configured Grocy shopping list. |
+| Grocy shopping list → ConnectLife | Add or update the corresponding item in the configured ConnectLife shopping list. |
+| ConnectLife inventory → Grocy | Reflect refrigerator contents in Grocy stock at the mapped location. |
+| Grocy inventory → ConnectLife | Reflect Grocy stock at a mapped refrigerator location in the corresponding ConnectLife zone. |
 
-All other Grocy locations remain Grocy-only. Credentials, API keys and exported
-Home Assistant config entries must never be committed.
+The safe rollout policy is add/update first. Automatic deletion must remain
+disabled until stable item matching, conflict resolution, and an explicit user
+decision on deletion semantics are implemented. Synchronization also needs
+source identifiers and loop prevention so that an update received from one
+system is not echoed back forever.
+
+## Current implementation status
+
+The table separates observed, working API operations from the final
+bidirectional product goal. “Not verified” does not mean data was changed; it
+means the live round trip has not yet been safely completed.
+
+| Area / operation | Status | Notes |
+| --- | --- | --- |
+| ConnectLife login and token renewal | Working | Independently authenticated with the owner’s account; credentials are provided through the HA config flow. |
+| ConnectLife refrigerator inventory read | Working | Live refrigerator inventory has been returned through the HA service. |
+| ConnectLife shopping-list read | Working | Live list metadata/items can be read. |
+| ConnectLife catalog and unit read | Working | Available through the current client. |
+| Create an empty ConnectLife shopping list | Working | Confirmed in local API testing. |
+| Delete a ConnectLife shopping list | Working | Confirmed in local API testing. |
+| Rename a ConnectLife list / update a list with `purchases` | Blocked | `fridge/updateShoppingList` returns `control_validate_err` / upstream HTTP 500. The request contract for this account is not yet reproduced. |
+| ConnectLife → Grocy shopping-list import | Implemented, not live-verified | Requires a responsive Grocy REST transport in the installed HA instance. |
+| Grocy → ConnectLife shopping-list export | Blocked | Depends on the unresolved ConnectLife list-update/write contract. |
+| ConnectLife → Grocy inventory import | Implemented, not live-verified | Inventory reads work; end-to-end Grocy writing still needs live verification. |
+| Grocy → ConnectLife inventory export | Not implemented | Requires a verified ConnectLife inventory-write contract. |
+| Grocy API reachability from Home Assistant | Needs investigation | The Grocy endpoint is reachable from the host, but relevant HA services have previously waited without a response. The client currently needs explicit request timeouts and diagnostics. |
+| Full automatic two-way synchronization | Not ready | It must not be presented as working until all four directions above are verified with real data and loop prevention. |
+
+## Data safety and configuration
+
+- The config flow accepts the Grocy URL/API key and ConnectLife account data;
+  no change to `secrets.yaml` or `.storage` is required.
+- Access and refresh tokens must never be committed, printed in diagnostics, or
+  manually copied into source files.
+- The integration must never silently delete Grocy stock, ConnectLife inventory,
+  or shopping-list entries.
+- A write failure must leave the source system unchanged and expose a useful
+  diagnostic error instead of guessing an alternative request payload.
+
+## Development and installation
+
+The custom integration lives at:
+
+```text
+custom_components/hisense_food_manager/
+```
+
+Installing or updating a Home Assistant custom integration requires a Home
+Assistant restart. Deployment, configuration-entry migration, and restart are
+deliberate operational actions and are not performed by this repository alone.
+
+Credentials, API keys, exported Home Assistant config entries, `.storage`, and
+`secrets.yaml` are excluded from version control.
+
+## Next milestones
+
+1. Add timeouts and precise diagnostics to the Grocy client; verify live Grocy
+   read/write with a non-destructive fixture.
+2. Capture or obtain a documented ConnectLife contract for updating shopping
+   lists containing purchases.
+3. Implement stable item matching, conflict policy, and loop prevention.
+4. Implement the missing Grocy inventory → ConnectLife write direction.
+5. Verify each direction independently before enabling scheduled automatic
+   synchronization.
