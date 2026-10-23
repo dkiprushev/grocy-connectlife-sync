@@ -102,7 +102,24 @@ means the live round trip has not yet been safely completed.
 - A write failure must leave the source system unchanged and expose a useful
   diagnostic error instead of guessing an alternative request payload.
 
-## Development and installation
+## Installation and updates through HACS
+
+This repository is structured as one HACS custom integration. After it is
+published on GitHub, install it once in Home Assistant:
+
+1. Open **HACS → Integrations → ⋮ → Custom repositories**.
+2. Add `https://github.com/dkiprushev/grocy-connectlife-sync` with category
+   **Integration**.
+3. Find **Grocy ConnectLife Sync** in HACS and choose **Download**.
+4. Restart Home Assistant, then configure the integration through
+   **Settings → Devices & services**.
+
+Future versions are offered in HACS. Install an offered update there and
+restart Home Assistant; manual copying into `custom_components` is no longer
+needed. Published GitHub releases are preferred because HACS can show a
+version picker; until a release is published, HACS follows the default branch.
+
+## Development
 
 The custom integration lives at:
 

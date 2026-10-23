@@ -1,11 +1,11 @@
 {
   "domain": "hisense_food_manager",
   "name": "Grocy ConnectLife Sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "requirements": [],
   "config_flow": true,
-  "documentation": "https://github.com/oyvindwe/connectlife-ha",
-  "issue_tracker": "https://github.com/oyvindwe/connectlife-ha/issues",
+  "documentation": "https://github.com/dkiprushev/grocy-connectlife-sync",
+  "issue_tracker": "https://github.com/dkiprushev/grocy-connectlife-sync/issues",
   "codeowners": [],
   "iot_class": "local_polling",
   "integration_type": "service"
