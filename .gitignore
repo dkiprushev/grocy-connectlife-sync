@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.log
+
+# Home Assistant runtime data and local credentials
+.storage/
+secrets.yaml
+configuration.yaml

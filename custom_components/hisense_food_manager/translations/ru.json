@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Grocy ConnectLife Sync",
+        "description": "Подключите Grocy и аккаунт ConnectLife. Пароль хранится в записи интеграции Home Assistant; OAuth-токены — только в памяти.",
+        "data": {"grocy_url": "Локальный адрес Grocy", "grocy_api_key": "API-ключ Grocy", "connectlife_username": "Эл. почта ConnectLife", "connectlife_password": "Пароль ConnectLife"}
+      },
+      "init": {
+        "title": "Аккаунт ConnectLife",
+        "description": "Укажите аккаунт для независимой сессии ConnectLife.",
+        "data": {"connectlife_username": "Эл. почта ConnectLife", "connectlife_password": "Пароль ConnectLife"}
+      }
+    },
+    "error": {"cannot_connect": "Не удалось подключиться к Grocy. Проверьте адрес и API-ключ.", "invalid_auth": "Не удалось войти в ConnectLife. Проверьте эл. почту и пароль."},
+    "abort": {"already_configured": "Этот Grocy уже подключён."}
+  }
+}

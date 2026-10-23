@@ -1,0 +1,67 @@
+get_shopping_list:
+  name: Получить список покупок
+  description: Читает текущий список покупок из Food Manager холодильника.
+get_shopping_lists:
+  name: Получить списки покупок
+  description: Читает названия и число позиций во всех списках покупок ConnectLife.
+create_shopping_list:
+  name: Создать список покупок
+  description: Создаёт пустой список покупок с указанным именем. Существующий список не изменяет.
+  fields:
+    shopping_list_name:
+      name: Имя списка
+      required: true
+      selector:
+        text:
+delete_shopping_list:
+  name: Удалить список покупок
+  description: Удаляет ровно один список покупок с указанным именем.
+  fields:
+    shopping_list_name:
+      name: Имя списка
+      required: true
+      selector:
+        text:
+get_inventory:
+  name: Получить инвентарь
+  description: Читает текущий инвентарь холодильника без изменения данных.
+get_catalog:
+  name: Получить каталог продуктов
+  description: Читает каталог продуктов ConnectLife.
+get_units:
+  name: Получить единицы измерения
+  description: Читает доступные единицы измерения ConnectLife.
+get_grocy_snapshot:
+  name: Проверить Grocy
+  description: Читает состояние локального Grocy без изменений.
+test_grocy_roundtrip:
+  name: Проверить Grocy записью
+  description: Создаёт, проверяет и удаляет временный продукт с меткой HA test.
+plan_inventory_sync:
+  name: Спланировать синхронизацию инвентаря
+  description: Сопоставляет инвентарь холодильника с Grocy без создания и изменения записей.
+test_grocy_stock_roundtrip:
+  name: Проверить остаток Grocy
+  description: Создаёт временный продукт и остаток, проверяет оба и полностью очищает их.
+import_inventory_to_grocy:
+  name: Импортировать инвентарь в Grocy
+  description: Однократно создаёт отсутствующие продукты и их остатки из холодильника. Существующие продукты не меняет.
+test_grocy_shopping_roundtrip:
+  name: Проверить список покупок Grocy
+  description: Создаёт и удаляет временный продукт и позицию списка покупок, затем подтверждает очистку.
+import_shopping_to_grocy:
+  name: Импортировать список покупок в Grocy
+  description: Добавляет в Grocy отсутствующие позиции списка покупок из холодильника; повторный импорт не создаёт дублей.
+test_connectlife_shopping_roundtrip:
+  name: Проверить запись списка ConnectLife
+  description: На пустом списке добавляет один временный товар из каталога, удаляет его и подтверждает очистку.
+sync_grocy_shopping_to_connectlife:
+  name: Синхронизировать покупки Grocy в ConnectLife
+  description: Добавляет отсутствующие незавершённые позиции Grocy в явно указанный список ConnectLife. Существующие покупки не изменяет и не дублирует.
+  fields:
+    shopping_list_name:
+      name: Список ConnectLife
+      description: Точное имя списка покупок ConnectLife, в который будут добавлены позиции.
+      required: true
+      selector:
+        text:
