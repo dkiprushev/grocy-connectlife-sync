@@ -5,7 +5,7 @@ import asyncio
 import unittest
 
 from hisense_food_manager.connectlife import ConnectLifeFoodClient
-from hisense_food_manager.grocy import GrocyClient
+from hisense_food_manager.grocy import GrocyClient, GrocyError
 from hisense_food_manager.models import FoodZone, InventoryItem
 
 
@@ -73,7 +73,7 @@ class GrocyInventorySyncTests(unittest.TestCase):
             InventoryItem("Молоко", FoodZone.FRIDGE, 3),
         ]))
         self.assertEqual(result["updated"], ["Молоко"])
-        self.assertEqual(writes, [("/api/stock/products/4/inventory", {"new_amount": 3, "location_id": 2})])
+        self.assertEqual(writes, [("/api/stock/products/4/add", {"amount": 2, "location_id": 2})])
 
     def test_connectlife_to_grocy_skips_an_unmapped_zone(self) -> None:
         client = GrocyClient(None, "http://grocy/", "test")
@@ -95,4 +95,28 @@ class GrocyInventorySyncTests(unittest.TestCase):
             InventoryItem("Пицца", FoodZone.FREEZER, 1),
         ]))
         self.assertEqual(result["skipped_unmapped"], [{"name": "Пицца", "location": "Freezer"}])
+
+    def test_connectlife_to_grocy_consumes_excess_stock(self) -> None:
+        client = GrocyClient(None, "http://grocy/", "test")
+        writes: list[tuple[str, dict]] = []
+
+        async def list_rows(entity: str) -> list[dict]:
+            return {
+                "products": [{"id": 4, "name": "Молоко"}],
+                "locations": [{"id": 2, "name": "Fridge"}],
+                "quantity_units": [{"id": 1, "name": "pcs"}],
+            }[entity]
+
+        async def request(method: str, path: str, **kwargs) -> dict | list:
+            if method == "GET" and path == "/api/stock":
+                return [{"product_id": 4, "location_id": 2, "amount": 2}]
+            writes.append((path, kwargs["json"]))
+            return {}
+
+        client.async_list = list_rows
+        client._request = request
+        result = asyncio.run(client.async_sync_inventory_from_connectlife([
+            InventoryItem("Молоко", FoodZone.FRIDGE, 1),
+        ]))
+        self.assertEqual(writes, [("/api/stock/products/4/consume", {"amount": 1, "location_id": 2})])
 

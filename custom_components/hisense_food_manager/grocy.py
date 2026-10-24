@@ -278,9 +278,14 @@ class GrocyClient:
             if current == item.quantity:
                 unchanged.append(item.name)
                 continue
-            await self._request("POST", f"/api/stock/products/{product_id}/inventory", json={
-                "new_amount": item.quantity, "location_id": location_id,
-            })
+            if item.quantity > current:
+                await self._request("POST", f"/api/stock/products/{product_id}/add", json={
+                    "amount": item.quantity - current, "location_id": location_id,
+                })
+            else:
+                await self._request("POST", f"/api/stock/products/{product_id}/consume", json={
+                    "amount": current - item.quantity, "location_id": location_id,
+                })
             amounts[(product_id, location_id)] = item.quantity
             updated.append(item.name)
         return {
@@ -313,11 +318,16 @@ class GrocyClient:
             })
         else:
             product_id = int(product["id"])
-        await self._request("POST", f"/api/stock/products/{product_id}/inventory", json={
-            "new_amount": item.quantity, "location_id": location["id"],
+        await self._request("POST", f"/api/stock/products/{product_id}/add", json={
+            "amount": item.quantity, "location_id": location["id"],
         })
-        staged = await self.async_inventory_items()
-        if not any(normalized_name(row.name) == key and row.zone == item.zone and row.quantity == item.quantity for row in staged):
+        stock = await self._request("GET", "/api/stock")
+        if not any(
+            int(row.get("product_id", -1)) == product_id
+            and int(row.get("location_id", -1)) == int(location["id"])
+            and float(row.get("amount") or 0) == item.quantity
+            for row in stock if isinstance(row, dict)
+        ):
             raise GrocyError(f"Grocy did not return staged stock: {item.name}")
         return {"name": item.name, "zone": item.zone.value, "quantity": item.quantity,
                 "product_id": product_id, "created_product": created, "verified": True}
