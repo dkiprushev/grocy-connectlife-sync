@@ -75,3 +75,24 @@ class GrocyInventorySyncTests(unittest.TestCase):
         self.assertEqual(result["updated"], ["Молоко"])
         self.assertEqual(writes, [("/api/stock/products/4/inventory", {"new_amount": 3, "location_id": 2})])
 
+    def test_connectlife_to_grocy_skips_an_unmapped_zone(self) -> None:
+        client = GrocyClient(None, "http://grocy/", "test")
+
+        async def list_rows(entity: str) -> list[dict]:
+            return {
+                "products": [], "locations": [{"id": 2, "name": "Fridge"}],
+                "quantity_units": [{"id": 1, "name": "pcs"}],
+            }[entity]
+
+        async def request(method: str, path: str, **kwargs) -> dict | list:
+            if path == "/api/stock":
+                return []
+            return {"created_object_id": 10}
+
+        client.async_list = list_rows
+        client._request = request
+        result = asyncio.run(client.async_sync_inventory_from_connectlife([
+            InventoryItem("Пицца", FoodZone.FREEZER, 1),
+        ]))
+        self.assertEqual(result["skipped_unmapped"], [{"name": "Пицца", "location": "Freezer"}])
+

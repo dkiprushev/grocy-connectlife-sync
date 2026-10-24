@@ -254,11 +254,16 @@ class GrocyClient:
         created: list[str] = []
         updated: list[str] = []
         unchanged: list[str] = []
+        skipped_unmapped: list[dict[str, str]] = []
         for item in items:
             location_name = self.location_name(item.zone)
             location_id = location_by_name.get(location_name)
             if location_id is None:
-                raise GrocyError(f"Grocy location is missing: {location_name}")
+                # A refrigerator can expose zones which the household has not
+                # chosen to model in Grocy yet.  Do not turn one unmapped zone
+                # into a failure for all of the other mapped zones.
+                skipped_unmapped.append({"name": item.name, "location": location_name})
+                continue
             key = normalized_name(item.name)
             product_id = product_by_name.get(key)
             if product_id is None:
@@ -282,7 +287,40 @@ class GrocyClient:
             "created": created, "created_count": len(created),
             "updated": updated, "updated_count": len(updated),
             "unchanged": unchanged, "unchanged_count": len(unchanged),
+            "skipped_unmapped": skipped_unmapped,
+            "skipped_unmapped_count": len(skipped_unmapped),
         }
+
+    async def async_stage_inventory_item(self, item: InventoryItem) -> dict:
+        """Create or set one explicitly named Grocy stock item for a live E2E run."""
+        units, locations, products = await asyncio.gather(
+            self.async_list("quantity_units"), self.async_list("locations"), self.async_list("products")
+        )
+        if not units:
+            raise GrocyError("Grocy has no quantity units")
+        location_name = self.location_name(item.zone)
+        location = next((row for row in locations if row.get("name") == location_name), None)
+        if location is None or location.get("id") is None:
+            raise GrocyError(f"Grocy location is missing: {location_name}")
+        key = normalized_name(item.name)
+        product = next((row for row in products if normalized_name(str(row.get("name", ""))) == key), None)
+        created = product is None
+        if product is None:
+            product_id = await self.async_create("products", {
+                "name": item.name, "location_id": location["id"],
+                "qu_id_purchase": units[0]["id"], "qu_id_stock": units[0]["id"],
+                "min_stock_amount": 0,
+            })
+        else:
+            product_id = int(product["id"])
+        await self._request("POST", f"/api/stock/products/{product_id}/inventory", json={
+            "new_amount": item.quantity, "location_id": location["id"],
+        })
+        staged = await self.async_inventory_items()
+        if not any(normalized_name(row.name) == key and row.zone == item.zone and row.quantity == item.quantity for row in staged):
+            raise GrocyError(f"Grocy did not return staged stock: {item.name}")
+        return {"name": item.name, "zone": item.zone.value, "quantity": item.quantity,
+                "product_id": product_id, "created_product": created, "verified": True}
 
     async def async_inventory_sync_plan(self, items: list[InventoryItem]) -> dict:
         """Describe the Grocy work needed for fridge inventory without writing."""

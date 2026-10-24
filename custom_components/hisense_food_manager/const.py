@@ -30,3 +30,5 @@ SERVICE_SYNC_GROCY_SHOPPING_TO_CONNECTLIFE = "sync_grocy_shopping_to_connectlife
 SERVICE_SYNC_CONNECTLIFE_INVENTORY_TO_GROCY = "sync_connectlife_inventory_to_grocy"
 SERVICE_SYNC_GROCY_INVENTORY_TO_CONNECTLIFE = "sync_grocy_inventory_to_connectlife"
 SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP = "test_connectlife_inventory_roundtrip"
+SERVICE_STAGE_GROCY_INVENTORY_ITEM = "stage_grocy_inventory_item"
+SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM = "stage_connectlife_inventory_item"

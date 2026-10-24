@@ -65,3 +65,53 @@ sync_grocy_shopping_to_connectlife:
       required: true
       selector:
         text:
+stage_grocy_inventory_item:
+  name: Создать тестовый остаток Grocy
+  description: Создаёт или обновляет один явно названный остаток Grocy и подтверждает его чтением. Используется для сквозной проверки Grocy → ConnectLife.
+  fields:
+    name:
+      name: Название
+      required: true
+      selector:
+        text:
+    zone:
+      name: Зона
+      required: false
+      selector:
+        select:
+          options:
+            - fridge
+            - freezer
+            - my_fresh_choice
+    quantity:
+      name: Количество
+      required: false
+      selector:
+        number:
+          min: 0
+          step: 1
+stage_connectlife_inventory_item:
+  name: Добавить тестовый продукт в холодильник
+  description: Добавляет один явно названный продукт в инвентарь ConnectLife и подтверждает его чтением. Используется для сквозной проверки ConnectLife → Grocy.
+  fields:
+    name:
+      name: Название
+      required: true
+      selector:
+        text:
+    zone:
+      name: Зона
+      required: false
+      selector:
+        select:
+          options:
+            - fridge
+            - freezer
+            - my_fresh_choice
+    quantity:
+      name: Количество
+      required: false
+      selector:
+        number:
+          min: 0
+          step: 1

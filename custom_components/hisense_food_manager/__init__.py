@@ -19,8 +19,11 @@ from .const import (
     SERVICE_SYNC_CONNECTLIFE_INVENTORY_TO_GROCY,
     SERVICE_SYNC_GROCY_INVENTORY_TO_CONNECTLIFE,
     SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP,
+    SERVICE_STAGE_GROCY_INVENTORY_ITEM,
+    SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM,
 )
 from .grocy import GrocyClient
+from .models import FoodZone, InventoryItem
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -163,6 +166,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN, SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP,
             test_connectlife_inventory_roundtrip, supports_response="only",
         )
+        async def stage_grocy_inventory_item(call: ServiceCall) -> dict:
+            item = InventoryItem(
+                str(call.data["name"]), FoodZone(str(call.data.get("zone", "fridge"))),
+                float(call.data.get("quantity", 1)),
+            )
+            return await grocy_client().async_stage_inventory_item(item)
+        hass.services.async_register(
+            DOMAIN, SERVICE_STAGE_GROCY_INVENTORY_ITEM,
+            stage_grocy_inventory_item, supports_response="only",
+        )
+        async def stage_connectlife_inventory_item(call: ServiceCall) -> dict:
+            item = InventoryItem(
+                str(call.data["name"]), FoodZone(str(call.data.get("zone", "fridge"))),
+                float(call.data.get("quantity", 1)),
+            )
+            return await ConnectLifeFoodClient(hass).async_add_inventory_item(item)
+        hass.services.async_register(
+            DOMAIN, SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM,
+            stage_connectlife_inventory_item, supports_response="only",
+        )
     return True
 
 
@@ -192,4 +215,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_SYNC_CONNECTLIFE_INVENTORY_TO_GROCY)
         hass.services.async_remove(DOMAIN, SERVICE_SYNC_GROCY_INVENTORY_TO_CONNECTLIFE)
         hass.services.async_remove(DOMAIN, SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP)
+        hass.services.async_remove(DOMAIN, SERVICE_STAGE_GROCY_INVENTORY_ITEM)
+        hass.services.async_remove(DOMAIN, SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM)
     return True
