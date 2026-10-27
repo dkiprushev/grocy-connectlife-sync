@@ -87,7 +87,7 @@ means the live round trip has not yet been safely completed.
 | ConnectLife → Grocy shopping-list import | Partially verified | HA recognised an existing item; creation of a new item remains unverified. |
 | Grocy → ConnectLife shopping-list export | Verified via HA | An item was added and a repeat did not duplicate it. |
 | ConnectLife → Grocy inventory import | Verified via HA | A test item was created with its quantity in Fridge. |
-| Grocy → ConnectLife inventory export | Fix pending live verification | Grocy's aggregate stock endpoint omits location IDs; 0.2.3 reads stock batches instead. |
+| Grocy → ConnectLife inventory export | Verified via HA | Version 0.2.3 exported the test stock and a repeated run added no duplicates. Existing entries are skipped, not updated. |
 | Grocy API reachability from Home Assistant | Verified | Snapshot and product, stock, and shopping-list write/cleanup tests passed through HA. |
 | Full automatic two-way synchronization | Not ready | It must not be presented as working until all four directions above are verified with real data and loop prevention. |
 
@@ -101,7 +101,7 @@ means the live round trip has not yet been safely completed.
 - Expose the required empty-list name for the ConnectLife shopping write test
   in the Home Assistant action form.
 - Add regression coverage for multiple batches and unmapped locations. The
-  end-to-end export must still be verified after deploying this version.
+  deployed version exported a test stock item through HA; a repeat added none.
 
 - The config flow accepts the Grocy URL/API key and ConnectLife account data;
   no change to `secrets.yaml` or `.storage` is required.
@@ -146,7 +146,7 @@ Credentials, API keys, exported Home Assistant config entries, `.storage`, and
 
 ## Next milestones
 
-1. Verify the corrected inventory export and new-item shopping import in HA.
+1. Verify new-item shopping import in HA.
 2. Implement stable item matching, conflict policy, and loop prevention.
 3. Verify each direction independently before enabling scheduled automatic
    synchronization.
