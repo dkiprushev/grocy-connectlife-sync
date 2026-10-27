@@ -103,7 +103,8 @@ means the live round trip has not yet been safely completed.
 - Quantities other than 1, checked purchases and one-sided deletions are
   reported as conflicts: the observed ConnectLife purchase DTO cannot encode
   Grocy quantities. Automated scheduled sync and deletion propagation are not
-  implemented. Verify the new action in HA before using it with real data.
+  implemented. In a live HA test, one isolated item was added in each direction;
+  a repeat added neither again, while a quantity of 2 was reported as a conflict.
 
 ### Changes in 0.2.4
 
