@@ -30,6 +30,8 @@ class GrocyClient:
                     if response.status >= 400:
                         detail = (await response.text())[:300]
                         raise GrocyError(f"Grocy returned HTTP {response.status}: {detail}")
+                    if response.status == 204:
+                        return {}
                     return await response.json()
         except TimeoutError as err:
             raise GrocyError(f"Grocy request timed out after 15 seconds: {method} {path}") from err
@@ -227,11 +229,11 @@ class GrocyClient:
         return items
 
     async def async_sync_inventory_from_connectlife(self, items: list[InventoryItem]) -> dict:
-        """Make mapped Grocy stock match a ConnectLife inventory snapshot.
+        """Add missing mapped Grocy stock from a ConnectLife inventory snapshot.
 
         This only touches the three mapped refrigerator locations. Products in
-        every other Grocy location stay untouched. The operation is idempotent:
-        an unchanged snapshot produces no stock write.
+        every other Grocy location stay untouched. Reductions are reported and
+        never applied without an explicit deletion/conflict policy.
         """
         products, locations, units, stock = await asyncio.gather(
             self.async_list("products"), self.async_list("locations"),
@@ -254,6 +256,7 @@ class GrocyClient:
         created: list[str] = []
         updated: list[str] = []
         unchanged: list[str] = []
+        skipped_reductions: list[str] = []
         skipped_unmapped: list[dict[str, str]] = []
         for item in items:
             location_name = self.location_name(item.zone)
@@ -283,15 +286,15 @@ class GrocyClient:
                     "amount": item.quantity - current, "location_id": location_id,
                 })
             else:
-                await self._request("POST", f"/api/stock/products/{product_id}/consume", json={
-                    "amount": current - item.quantity, "location_id": location_id,
-                })
+                skipped_reductions.append(item.name)
+                continue
             amounts[(product_id, location_id)] = item.quantity
             updated.append(item.name)
         return {
             "created": created, "created_count": len(created),
             "updated": updated, "updated_count": len(updated),
             "unchanged": unchanged, "unchanged_count": len(unchanged),
+            "skipped_reductions": skipped_reductions, "skipped_reductions_count": len(skipped_reductions),
             "skipped_unmapped": skipped_unmapped,
             "skipped_unmapped_count": len(skipped_unmapped),
         }

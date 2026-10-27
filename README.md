@@ -83,12 +83,12 @@ means the live round trip has not yet been safely completed.
 | ConnectLife catalog and unit read | Working | Available through the current client. |
 | Create an empty ConnectLife shopping list | Working | Confirmed in local API testing. |
 | Delete a ConnectLife shopping list | Working | Confirmed in local API testing. |
-| Rename a ConnectLife list / update a list with `purchases` | Blocked | `fridge/updateShoppingList` returns `control_validate_err` / upstream HTTP 500. The request contract for this account is not yet reproduced. |
+| Rename a ConnectLife list / update a list with `purchases` | Working locally | Android authentication and signed updates have been verified with empty and populated test lists, followed by readback. |
 | ConnectLife → Grocy shopping-list import | Implemented, not live-verified | Requires a responsive Grocy REST transport in the installed HA instance. |
-| Grocy → ConnectLife shopping-list export | Blocked | Depends on the unresolved ConnectLife list-update/write contract. |
+| Grocy → ConnectLife shopping-list export | Partially verified | Local tests with Grocy-shaped items verified add, repeat without duplicates, and append while retaining existing purchases. The HA-to-Grocy flow still needs live testing. |
 | ConnectLife → Grocy inventory import | Implemented, not live-verified | Inventory reads work; end-to-end Grocy writing still needs live verification. |
-| Grocy → ConnectLife inventory export | Not implemented | Requires a verified ConnectLife inventory-write contract. |
-| Grocy API reachability from Home Assistant | Needs investigation | The Grocy endpoint is reachable from the host, but relevant HA services have previously waited without a response. The client currently needs explicit request timeouts and diagnostics. |
+| Grocy → ConnectLife inventory export | Partially verified | Local Android add/read/delete of an isolated refrigerator item succeeded. The full HA-to-Grocy flow remains unverified. |
+| Grocy API reachability from Home Assistant | Needs investigation | Requests have a 15-second timeout; end-to-end HA-to-Grocy access still needs live verification. |
 | Full automatic two-way synchronization | Not ready | It must not be presented as working until all four directions above are verified with real data and loop prevention. |
 
 ## Data safety and configuration

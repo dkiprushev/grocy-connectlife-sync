@@ -96,7 +96,7 @@ class GrocyInventorySyncTests(unittest.TestCase):
         ]))
         self.assertEqual(result["skipped_unmapped"], [{"name": "Пицца", "location": "Freezer"}])
 
-    def test_connectlife_to_grocy_consumes_excess_stock(self) -> None:
+    def test_connectlife_to_grocy_does_not_consume_excess_stock(self) -> None:
         client = GrocyClient(None, "http://grocy/", "test")
         writes: list[tuple[str, dict]] = []
 
@@ -118,5 +118,6 @@ class GrocyInventorySyncTests(unittest.TestCase):
         result = asyncio.run(client.async_sync_inventory_from_connectlife([
             InventoryItem("Молоко", FoodZone.FRIDGE, 1),
         ]))
-        self.assertEqual(writes, [("/api/stock/products/4/consume", {"amount": 1, "location_id": 2})])
+        self.assertEqual(writes, [])
+        self.assertEqual(result["skipped_reductions"], ["Молоко"])
 

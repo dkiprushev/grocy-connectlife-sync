@@ -8,6 +8,7 @@ import hashlib
 import json
 import time
 import uuid
+from datetime import date
 
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -557,7 +558,8 @@ class ConnectLifeFoodClient:
             **base,
             "shoppingListId": target["id"],
             "shoppingListName": str(target.get("name") or target.get("shoppingListName") or target_name),
-            "purchases": [*existing, *(self._purchase_payload(item) for item in pending)],
+            "purchases": [*(self._purchase_form_data(row) for row in existing),
+                          *(self._purchase_payload(item) for item in pending)],
         }
         await self._async_write(self._UPDATE_SHOPPING_PATH, request)
         after_lists = self._shopping_list_containers(await self._async_get(self._SHOPPING_LIST_PATH, base))
@@ -609,9 +611,11 @@ class ConnectLifeFoodClient:
             "foodUnitCode": item.unit or source.get("foodUnitCode"),
             "roomId": room.get("roomId"),
             "roomCode": room.get("roomCode"),
-            "invalidTime": item.best_before or source.get("invalidTime"),
-            "foodSaveDate": source.get("foodSaveDate"),
+            "invalidTime": max(0, (date.fromisoformat(item.best_before) - date.today()).days) if isinstance(item.best_before, str) and item.best_before else source.get("invalidTime", 3),
+            "foodSaveDate": source.get("foodSaveDate") or int(time.time()),
             "enteringSource": source.get("enteringSource", 0),
+            "customized": source.get("customized", "1"),
+            "icon": source.get("icon", ""),
         }
         if existing and existing.get("fridgeFoodId") is not None:
             payload["fridgeFoodId"] = existing["fridgeFoodId"]
@@ -637,7 +641,20 @@ class ConnectLifeFoodClient:
             None,
         )
         payload = self._inventory_write_payload(item, room=room, food=catalog_food)
-        await self._async_write(self._ADD_INVENTORY_PATH, payload)
+        _, _, refrigerator = await self._async_api_and_refrigerator()
+        payload["puid"] = self._device_id(refrigerator)
+        if not payload.get("foodUnitId"):
+            units = await self.async_units()
+            desired_unit = (item.unit or "ea").lower()
+            if desired_unit in ("pcs", "piece", "pc", "number"):
+                desired_unit = "ea"
+            unit = next((row for row in units if str(row.get("unitCode", "")).lower() == desired_unit), None)
+            if unit is None:
+                raise ApiContractUnavailable("ConnectLife did not return a pieces unit for inventory")
+            payload["foodUnitId"] = unit["unitId"]
+        await self._async_write(self._ADD_INVENTORY_PATH, {
+            "puid": self._device_id(refrigerator), "fridgeFoods": [payload],
+        })
         after = await self.async_inventory_rows()
         matches = [
             row for row in after
@@ -651,14 +668,17 @@ class ConnectLifeFoodClient:
         return {
             "name": item.name,
             "zone": item.zone.value,
-            "fridge_food_id": str(created.get("fridgeFoodId") or created.get("foodId") or ""),
+            "fridge_food_id": str(created.get("cusFoodId") or created.get("fridgeFoodId") or ""),
         }
 
     async def async_delete_inventory_item(self, fridge_food_id: str) -> dict[str, Any]:
         """Delete one inventory record and verify that its exact ID vanished."""
-        await self._async_write(self._DELETE_INVENTORY_PATH, {"fridgeFoodIds": [fridge_food_id]})
+        _, _, refrigerator = await self._async_api_and_refrigerator()
+        await self._async_write(self._DELETE_INVENTORY_PATH, {
+            "puid": self._device_id(refrigerator), "fridgeIds": [fridge_food_id],
+        })
         rows = await self.async_inventory_rows()
-        if any(str(row.get("fridgeFoodId") or row.get("foodId") or "") == fridge_food_id for row in rows):
+        if any(str(row.get("cusFoodId") or row.get("fridgeFoodId") or "") == fridge_food_id for row in rows):
             raise ApiContractUnavailable(f"ConnectLife still returned inventory item {fridge_food_id}")
         return {"deleted": fridge_food_id, "verified": True}
 
@@ -788,20 +808,7 @@ class ConnectLifeFoodClient:
             "shoppingListName": target["name"],
         }
         if target.get("purchaseDataList"):
-            # A prior test left a temporary item behind.  The appliance's
-            # reset endpoint does not clear it and an empty update is rejected
-            # by this backend's signature validator.  The Android app's
-            # documented list delete endpoint accepts just a list of IDs.
-            await self._async_write(self._DELETE_SHOPPING_PATH, {"shoppingListIds": [target["id"]]})
-            await self._async_write(
-                self._ADD_SHOPPING_PATH,
-                {"shoppingListName": target_name, "purchases": []},
-            )
-            lists = self._find_rows(await self._async_get(self._SHOPPING_LIST_PATH, base), "shopping")
-            target = next((row for row in lists if row.get("name") == target_name), None)
-            if target is None or target.get("purchaseDataList"):
-                raise ApiContractUnavailable("Shopping-list roundtrip requires an empty target list")
-            purchase_base = {"shoppingListId": target["id"], "shoppingListName": target["name"]}
+            raise ApiContractUnavailable("Shopping-list roundtrip requires an empty target list")
         # Recovered from the Android AOT functions
         # ``ShoppingListModel.toFormData`` and
         # ``ShoppingListItemModel.toFormData``.  The app updates the whole
@@ -830,16 +837,12 @@ class ConnectLifeFoodClient:
             if len(matching) != 1:
                 raise ApiContractUnavailable("Could not identify the temporary ConnectLife shopping item")
         finally:
-            # The same documented Android operations restore an empty list
-            # with the user-facing name unchanged.
-            await self._async_write(self._DELETE_SHOPPING_PATH, {"shoppingListIds": [target["id"]]})
-            await self._async_write(
-                self._ADD_SHOPPING_PATH,
-                {"shoppingListName": target_name, "purchases": []},
-            )
+            await self._async_write(self._UPDATE_SHOPPING_PATH, {
+                "shoppingListId": target["id"], "shoppingListName": target_name, "purchases": [],
+            })
         lists = self._find_rows(await self._async_get(self._SHOPPING_LIST_PATH, base), "shopping")
-        reset = next((row for row in lists if row.get("name") == target_name), None)
-        if (reset or {}).get("purchaseDataList"):
+        reset = next((row for row in lists if str(row.get("id")) == str(target["id"])), None)
+        if reset is None or reset.get("purchaseDataList"):
             raise ApiContractUnavailable("ConnectLife did not remove the temporary shopping item")
         return {"created_and_removed": candidate["foodName"], "cleanup_verified": True,
                 "write_contract": "fridge/updateShoppingList", "request_fields": sorted(request)}
