@@ -93,6 +93,12 @@ means the live round trip has not yet been safely completed.
 
 ## Data safety and configuration
 
+### Changes in 0.2.6
+
+- Add an optional 15-minute Home Assistant automation blueprint. It must be
+  imported and enabled explicitly, and reports conflicts and errors to the
+  Home Assistant log. Installing the integration does not activate it.
+
 ### Changes in 0.2.5
 
 - Add an explicitly invoked bidirectional shopping action for one named
@@ -145,6 +151,25 @@ means the live round trip has not yet been safely completed.
   diagnostic error instead of guessing an alternative request payload.
 
 ## Installation and updates through HACS
+
+### Optional automatic sync
+
+Home Assistant can run the two bidirectional actions using an automation.
+The optional blueprint at
+`blueprints/automation/grocy_connectlife_sync/periodic_sync.yaml` runs every
+15 minutes, uses `mode: single` to avoid overlapping executions, and logs
+conflicts and errors. Import it into **Settings → Automations & scenes →
+Blueprints**, create an automation, and select the exact ConnectLife list
+name and Grocy list ID. Creating and enabling that automation authorizes
+periodic writes in both directions; it is not enabled by installing the
+integration. Its interval can be changed in a copied blueprint.
+
+The blueprint does not resolve conflicts or propagate deletions. Review the
+existing quantity conflicts and unmapped locations before enabling it. A
+Grocy quantity other than one in a shopping list remains a reported conflict,
+because the observed ConnectLife purchase DTO does not preserve quantities.
+The current matching uses normalized names, not stable cross-system IDs; do
+not use unattended sync for production data until these limits are resolved.
 
 This repository is structured as one HACS custom integration. After it is
 published on GitHub, install it once in Home Assistant:
