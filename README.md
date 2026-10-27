@@ -93,6 +93,17 @@ means the live round trip has not yet been safely completed.
 
 ## Data safety and configuration
 
+### Changes in 0.2.8
+
+- The optional automatic sync now uses independent persistent retry schedules
+  for inventory and shopping: after consecutive errors wait 1, 2, 5, then 10
+  minutes; after success return to a one-minute interval. Conflicts do not
+  count as connectivity failures. First failure and recovery are logged;
+  repeated identical conflicts are logged only when they change.
+- A response from ConnectLife does not prove the refrigerator is online. The
+  available `offline_state` value has not been validated for this appliance,
+  so this version does not infer connectivity from it.
+
 ### Changes in 0.2.7
 
 - Change the optional periodic automation interval from 15 minutes to one
@@ -168,10 +179,11 @@ conflicts and errors. Import it into **Settings → Automations & scenes →
 Blueprints**, create an automation, and select the exact ConnectLife list
 name and Grocy list ID. Creating and enabling that automation authorizes
 periodic writes in both directions; it is not enabled by installing the
-integration. The delay is not guaranteed: slow requests, failures and skipped
-overlapping runs can make it longer than a minute. Its interval can be changed
-in a copied blueprint. This polls both upstream systems every minute; vendor
-rate limits and long-term reliability are not yet verified.
+integration. A lightweight tick runs every minute, but on failed exchanges
+network attempts back off independently by 1, 2, 5, then 10 minutes. After a
+successful exchange that direction returns to a one-minute interval. State is
+persisted over HA restarts; slow requests and skipped overlapping runs can add
+delay. Vendor rate limits and long-term reliability are not yet verified.
 
 The blueprint does not resolve conflicts or propagate deletions. Review the
 existing quantity conflicts and unmapped locations before enabling it. A

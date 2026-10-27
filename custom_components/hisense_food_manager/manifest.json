@@ -1,7 +1,7 @@
 {
   "domain": "hisense_food_manager",
   "name": "Grocy ConnectLife Sync",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "requirements": [],
   "config_flow": true,
   "documentation": "https://github.com/dkiprushev/grocy-connectlife-sync",

@@ -1,8 +1,9 @@
 blueprint:
   name: Grocy ConnectLife — периодическая синхронизация
   description: >-
-    Каждую минуту запускает действия синхронизации инвентаря и
-    выбранных списков покупок. Конфликты и ошибки записываются в журнал HA.
+    Каждую минуту проверяет, пора ли синхронизировать инвентарь и покупки.
+    При ошибках запросы выполняются реже: через 1, 2, 5 и 10 минут.
+    Конфликты и изменения доступности записываются в журнал HA.
     Создание автоматизации из этого шаблона включает запись данных в обе системы.
     Удаления и конфликтующие изменения не разрешаются автоматически.
   domain: automation
@@ -31,28 +32,8 @@ triggers:
     minutes: "/1"
 
 actions:
-  - action: hisense_food_manager.sync_inventory_bidirectional
-    response_variable: inventory_result
-    continue_on_error: true
-  - if:
-      - condition: template
-        value_template: "{{ inventory_result is not defined or inventory_result.errors | default([]) | count > 0 or inventory_result.conflicts | default([]) | count > 0 }}"
-    then:
-      - action: system_log.write
-        data:
-          level: warning
-          message: "Grocy ConnectLife: inventory result={{ inventory_result | default('action failed; see HA error log') }}"
-  - action: hisense_food_manager.sync_shopping_bidirectional
+  - action: hisense_food_manager.sync_adaptive
     data:
       shopping_list_name: !input connectlife_list
       grocy_shopping_list_id: !input grocy_list_id
-    response_variable: shopping_result
-    continue_on_error: true
-  - if:
-      - condition: template
-        value_template: "{{ shopping_result is not defined or shopping_result.errors | default([]) | count > 0 or shopping_result.conflicts | default([]) | count > 0 }}"
-    then:
-      - action: system_log.write
-        data:
-          level: warning
-          message: "Grocy ConnectLife: shopping result={{ shopping_result | default('action failed; see HA error log') }}"
+    response_variable: sync_result

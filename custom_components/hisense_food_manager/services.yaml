@@ -44,6 +44,22 @@ sync_shopping_bidirectional:
         number:
           min: 1
           step: 1
+sync_adaptive:
+  name: Адаптивная синхронизация
+  description: Запускает обмен только когда истёк срок повтора; при ошибках интервалы растут до 10 минут. Конфликты не удаляются и не перезаписываются.
+  fields:
+    shopping_list_name:
+      name: Список ConnectLife
+      required: true
+      selector:
+        text:
+    grocy_shopping_list_id:
+      name: ID списка Grocy
+      required: false
+      selector:
+        number:
+          min: 1
+          step: 1
 get_catalog:
   name: Получить каталог продуктов
   description: Читает каталог продуктов ConnectLife.

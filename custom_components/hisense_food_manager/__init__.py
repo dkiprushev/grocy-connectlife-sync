@@ -25,6 +25,7 @@ from .const import (
 from .grocy import GrocyClient
 from .models import FoodZone, InventoryItem
 from .coordinator import InventoryCoordinator, ShoppingCoordinator
+from .adaptive import AdaptiveSync
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -78,6 +79,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime["grocy"], ConnectLifeFoodClient(hass),
         Store(hass, 1, f"{DOMAIN}_shopping_{entry.entry_id}"),
     )
+    runtime["adaptive_sync"] = AdaptiveSync(
+        runtime["inventory_coordinator"], runtime["shopping_coordinator"],
+        Store(hass, 1, f"{DOMAIN}_adaptive_{entry.entry_id}"),
+    )
 
     if not hass.services.has_service(DOMAIN, SERVICE_PROBE_SHOPPING_LIST):
         async def probe_shopping_list(call: ServiceCall) -> dict:
@@ -130,6 +135,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return await hass.data[DOMAIN][entry.entry_id]["shopping_coordinator"].async_sync(
                 int(call.data.get("grocy_shopping_list_id", 1)), str(call.data["shopping_list_name"]))
         hass.services.async_register(DOMAIN, "sync_shopping_bidirectional", sync_shopping_bidirectional, supports_response="only")
+        async def sync_adaptive(call: ServiceCall) -> dict:
+            return await hass.data[DOMAIN][entry.entry_id]["adaptive_sync"].async_run(
+                int(call.data.get("grocy_shopping_list_id", 1)), str(call.data["shopping_list_name"]))
+        hass.services.async_register(DOMAIN, "sync_adaptive", sync_adaptive, supports_response="only")
         async def get_grocy_snapshot(call: ServiceCall) -> dict:
             return await grocy_client().async_snapshot()
         hass.services.async_register(DOMAIN, SERVICE_GET_GROCY_SNAPSHOT, get_grocy_snapshot, supports_response="only")
@@ -236,4 +245,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM)
         hass.services.async_remove(DOMAIN, "sync_inventory_bidirectional")
         hass.services.async_remove(DOMAIN, "sync_shopping_bidirectional")
+        hass.services.async_remove(DOMAIN, "sync_adaptive")
     return True
