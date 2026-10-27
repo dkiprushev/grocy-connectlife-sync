@@ -61,7 +61,7 @@ class GrocyClient:
     async def async_delete(self, entity: str, object_id: int) -> None:
         await self._request("DELETE", f"/api/objects/{entity}/{object_id}")
 
-    async def async_import_shopping_list(self, items: list[ShoppingItem]) -> dict:
+    async def async_import_shopping_list(self, items: list[ShoppingItem], shopping_list_id: int = 1) -> dict:
         """Import missing ConnectLife shopping items into Grocy without duplicates."""
         products, locations, units, shopping = await __import__("asyncio").gather(
             self.async_list("products"), self.async_list("locations"),
@@ -71,7 +71,8 @@ class GrocyClient:
             raise GrocyError("Grocy needs a quantity unit and location")
         product_ids = {normalized_name(str(row.get("name", ""))): int(row["id"])
                        for row in products if row.get("name") and row.get("id") is not None}
-        listed_product_ids = {int(row["product_id"]) for row in shopping if row.get("product_id") is not None}
+        listed_product_ids = {int(row["product_id"]) for row in shopping if row.get("product_id") is not None
+                              and int(row.get("shopping_list_id") or 1) == shopping_list_id and not row.get("done")}
         location_id = int(locations[0]["id"])
         created: list[str] = []
         skipped: list[str] = []
@@ -90,13 +91,13 @@ class GrocyClient:
             if product_id in listed_product_ids:
                 skipped.append(item.name)
                 continue
-            await self.async_create("shopping_list", self.shopping_payload(item, product_id))
+            await self.async_create("shopping_list", {**self.shopping_payload(item, product_id), "shopping_list_id": shopping_list_id})
             listed_product_ids.add(product_id)
             created.append(item.name)
         return {"created": created, "created_count": len(created),
                 "skipped_existing": skipped, "skipped_count": len(skipped)}
 
-    async def async_shopping_items(self) -> list[ShoppingItem]:
+    async def async_shopping_items(self, shopping_list_id: int = 1) -> list[ShoppingItem]:
         """Read the current Grocy shopping list without changing it.
 
         Grocy stores the product name separately from the shopping-list row.
@@ -119,6 +120,8 @@ class GrocyClient:
         }
         items: list[ShoppingItem] = []
         for row in shopping:
+            if int(row.get("shopping_list_id") or 1) != shopping_list_id:
+                continue
             product_id = row.get("product_id")
             if product_id is None or int(product_id) not in product_names:
                 continue
@@ -131,7 +134,7 @@ class GrocyClient:
                 name=product_names[int(product_id)],
                 quantity=quantity,
                 unit=(str(row.get("note")) if row.get("note") else unit_names.get(row.get("qu_id"))),
-                checked=bool(row.get("done_date")),
+                checked=bool(row.get("done") or row.get("done_date")),
                 vendor_id=str(row.get("id")) if row.get("id") is not None else None,
             ))
         return items

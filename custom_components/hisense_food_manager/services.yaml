@@ -28,6 +28,22 @@ get_inventory:
 sync_inventory_bidirectional:
   name: Синхронизировать инвентарь в обе стороны
   description: Сравнивает остатки с последним подтверждённым состоянием и переносит односторонние изменения. Конфликты и удаления сообщает без применения.
+sync_shopping_bidirectional:
+  name: Синхронизировать покупки в обе стороны
+  description: Сопоставляет выбранные списки и переносит отсутствующие позиции. Отмеченные товары, количества кроме одного и удаления сообщает как конфликты.
+  fields:
+    shopping_list_name:
+      name: Список ConnectLife
+      required: true
+      selector:
+        text:
+    grocy_shopping_list_id:
+      name: ID списка Grocy
+      required: false
+      selector:
+        number:
+          min: 1
+          step: 1
 get_catalog:
   name: Получить каталог продуктов
   description: Читает каталог продуктов ConnectLife.
@@ -56,6 +72,14 @@ import_shopping_to_grocy:
   name: Импортировать список покупок в Grocy
   description: Добавляет в Grocy отсутствующие позиции списка покупок из холодильника; повторный импорт не создаёт дублей.
   fields:
+    grocy_shopping_list_id:
+      name: ID списка Grocy
+      description: Идентификатор целевого списка Grocy; по умолчанию 1.
+      required: false
+      selector:
+        number:
+          min: 1
+          step: 1
     shopping_list_name:
       name: Список ConnectLife
       description: Точное имя исходного списка. Если список всего один, поле можно оставить пустым.
@@ -76,6 +100,14 @@ sync_grocy_shopping_to_connectlife:
   name: Синхронизировать покупки Grocy в ConnectLife
   description: Добавляет отсутствующие незавершённые позиции Grocy в явно указанный список ConnectLife. Существующие покупки не изменяет и не дублирует.
   fields:
+    grocy_shopping_list_id:
+      name: ID списка Grocy
+      description: Идентификатор исходного списка Grocy; по умолчанию 1.
+      required: false
+      selector:
+        number:
+          min: 1
+          step: 1
     shopping_list_name:
       name: Список ConnectLife
       description: Точное имя списка покупок ConnectLife, в который будут добавлены позиции.

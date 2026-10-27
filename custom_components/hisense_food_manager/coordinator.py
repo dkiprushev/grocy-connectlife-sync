@@ -78,3 +78,76 @@ class InventoryCoordinator:
                     results["errors"].append({"key": key, "error": str(err)})
             await self.store.async_save({**stored, "inventory": baseline})
             return results
+
+
+class ShoppingCoordinator:
+    """Exchange missing active names within one explicitly selected list pair.
+
+    ConnectLife's observed purchase DTO has no quantity; non-unit quantities,
+    checked items, deletions, and ambiguous names are reported, not guessed.
+    """
+    def __init__(self, grocy, connectlife, store):
+        self.grocy, self.connectlife, self.store = grocy, connectlife, store
+        self.lock = asyncio.Lock()
+
+    async def async_sync(self, grocy_list_id: int, connectlife_list_name: str):
+        if grocy_list_id < 1 or not connectlife_list_name.strip():
+            raise ValueError("Both shopping lists must be selected")
+        name = connectlife_list_name.strip()
+        async with self.lock:
+            grocy_lists = await self.grocy.async_list("shopping_lists")
+            if not any(int(row.get("id", -1)) == grocy_list_id for row in grocy_lists):
+                raise ValueError("Selected Grocy shopping list does not exist")
+            stored = await self.store.async_load() or {}
+            pairs = dict(stored.get("pairs", {}))
+            pair_key = f"{grocy_list_id}:{name}"
+            baseline = set(pairs.get(pair_key, []))
+            a, b = await asyncio.gather(self.grocy.async_shopping_items(grocy_list_id),
+                                        self.connectlife.async_shopping_items(name))
+            left, right = defaultdict(list), defaultdict(list)
+            for item in a: left[normalized_name(item.name)].append(item)
+            for item in b: right[normalized_name(item.name)].append(item)
+            result = {"to_grocy": [], "to_connectlife": [], "unchanged": [], "conflicts": [], "errors": []}
+            for key in sorted(set(left) | set(right) | baseline):
+                aa, bb = left.get(key, []), right.get(key, [])
+                if not key or len(aa) > 1 or len(bb) > 1:
+                    result["conflicts"].append({"key": key, "reason": "ambiguous_match"})
+                    continue
+                x, y = (aa[0] if aa else None), (bb[0] if bb else None)
+                if (x and x.checked) or (y and y.checked):
+                    result["conflicts"].append({"key": key, "reason": "checked_status_not_supported"})
+                    continue
+                if x and x.quantity != 1:
+                    result["conflicts"].append({"key": key, "reason": "quantity_not_supported"})
+                    continue
+                if key in baseline and (not x or not y):
+                    if not x and not y:
+                        baseline.discard(key)
+                    else:
+                        result["conflicts"].append({"key": key, "reason": "delete_conflict"})
+                    continue
+                if x and y:
+                    baseline.add(key)
+                    result["unchanged"].append(key)
+                    continue
+                try:
+                    if x:
+                        await self.connectlife.async_sync_grocy_shopping([x], name)
+                        direction = "to_connectlife"
+                    else:
+                        await self.grocy.async_import_shopping_list([y], grocy_list_id)
+                        direction = "to_grocy"
+                    after_a, after_b = await asyncio.gather(self.grocy.async_shopping_items(grocy_list_id),
+                                                            self.connectlife.async_shopping_items(name))
+                    if sum(normalized_name(i.name) == key and not i.checked for i in after_a) != 1 or sum(
+                            normalized_name(i.name) == key and not i.checked for i in after_b) != 1:
+                        raise RuntimeError("Readback did not confirm unique active items")
+                    baseline.add(key)
+                    pairs[pair_key] = sorted(baseline)
+                    await self.store.async_save({**stored, "pairs": pairs})
+                    result[direction].append(key)
+                except Exception as err:
+                    result["errors"].append({"key": key, "error": str(err)})
+            pairs[pair_key] = sorted(baseline)
+            await self.store.async_save({**stored, "pairs": pairs})
+            return result

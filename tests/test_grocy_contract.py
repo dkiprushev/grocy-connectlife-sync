@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1] / "custom_components"))
@@ -59,6 +60,19 @@ class GrocyShoppingImportContractTest(unittest.TestCase):
         self.assertIn('shopping_payload', source)
 
 class GrocyShoppingExportContractTest(unittest.TestCase):
+    def test_filters_list_and_preserves_done(self):
+        client = GrocyClient(None, "http://example.invalid", "test")
+        async def rows(entity):
+            return {"products": [{"id": 1, "name": "Milk"}, {"id": 2, "name": "Tea"}],
+                    "quantity_units": [], "shopping_list": [
+                        {"id": 5, "product_id": 1, "shopping_list_id": 1, "done": 1},
+                        {"id": 6, "product_id": 2, "shopping_list_id": 2, "done": 0},
+                    ]}[entity]
+        client.async_list = rows
+        items = asyncio.run(client.async_shopping_items(1))
+        self.assertEqual(len(items), 1)
+        self.assertTrue(items[0].checked)
+        self.assertEqual(items[0].name, "Milk")
     def test_shopping_export_reads_product_names_and_preserves_source_id(self):
         import inspect
         source = inspect.getsource(GrocyClient.async_shopping_items)

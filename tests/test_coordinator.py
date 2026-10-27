@@ -1,13 +1,14 @@
 import asyncio
+import copy
 import unittest
-from hisense_food_manager.coordinator import InventoryCoordinator
-from hisense_food_manager.models import FoodZone, InventoryItem
+from hisense_food_manager.coordinator import InventoryCoordinator, ShoppingCoordinator
+from hisense_food_manager.models import FoodZone, InventoryItem, ShoppingItem
 
 
 class Store:
     def __init__(self): self.data = {}
     async def async_load(self): return self.data.copy()
-    async def async_save(self, data): self.data = {**data, "inventory": dict(data["inventory"])}
+    async def async_save(self, data): self.data = copy.deepcopy(data)
 
 
 class Side:
@@ -41,6 +42,26 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(store.data["inventory"]["fridge:milk"], 4)
             left.quantity = None
             self.assertEqual((await sync.async_sync())["conflicts"][0]["reason"], "delete_conflict")
+        asyncio.run(run())
+
+
+class ShoppingTests(unittest.TestCase):
+    def test_bidirectional_add_and_deletion_conflict(self):
+        class ShoppingSide:
+            def __init__(self, names): self.items = [ShoppingItem(name) for name in names]
+            async def async_list(self, entity): return [{"id": 1}]
+            async def async_shopping_items(self, selection): return self.items[:]
+            async def async_import_shopping_list(self, items, selection): self.items.extend(items)
+            async def async_sync_grocy_shopping(self, items, selection): self.items.extend(items)
+        async def run():
+            left, right, store = ShoppingSide(["Milk"]), ShoppingSide(["Tea"]), Store()
+            coordinator = ShoppingCoordinator(left, right, store)
+            result = await coordinator.async_sync(1, "Test")
+            self.assertEqual(result["to_connectlife"], ["milk"])
+            self.assertEqual(result["to_grocy"], ["tea"])
+            self.assertEqual((await coordinator.async_sync(1, "Test"))["unchanged"], ["milk", "tea"])
+            right.items = [item for item in right.items if item.name != "Milk"]
+            self.assertEqual((await coordinator.async_sync(1, "Test"))["conflicts"][0]["reason"], "delete_conflict")
         asyncio.run(run())
 
     def test_failed_write_does_not_advance_baseline(self):

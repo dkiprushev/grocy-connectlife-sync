@@ -93,6 +93,18 @@ means the live round trip has not yet been safely completed.
 
 ## Data safety and configuration
 
+### Changes in 0.2.5
+
+- Add an explicitly invoked bidirectional shopping action for one named
+  ConnectLife list and one Grocy list ID, with verified readback and stored
+  paired-name baseline. Reject missing lists and ambiguous duplicate names.
+- Respect Grocy's `done` field and prevent items from different Grocy lists
+  from being combined. The default Grocy shopping-list ID is 1.
+- Quantities other than 1, checked purchases and one-sided deletions are
+  reported as conflicts: the observed ConnectLife purchase DTO cannot encode
+  Grocy quantities. Automated scheduled sync and deletion propagation are not
+  implemented. Verify the new action in HA before using it with real data.
+
 ### Changes in 0.2.4
 
 - Add an explicitly invoked bidirectional inventory action with per-entry
