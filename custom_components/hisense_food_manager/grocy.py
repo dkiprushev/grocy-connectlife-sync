@@ -76,6 +76,8 @@ class GrocyClient:
         created: list[str] = []
         skipped: list[str] = []
         for item in items:
+            if item.checked:
+                continue
             key = normalized_name(item.name)
             product_id = product_ids.get(key)
             if product_id is None:
@@ -231,7 +233,7 @@ class GrocyClient:
             )
         return list(items.values())
 
-    async def async_sync_inventory_from_connectlife(self, items: list[InventoryItem]) -> dict:
+    async def async_sync_inventory_from_connectlife(self, items: list[InventoryItem], *, allow_reductions: bool = False) -> dict:
         """Add missing mapped Grocy stock from a ConnectLife inventory snapshot.
 
         This only touches the three mapped refrigerator locations. Products in
@@ -289,8 +291,18 @@ class GrocyClient:
                     "amount": item.quantity - current, "location_id": location_id,
                 })
             else:
-                skipped_reductions.append(item.name)
-                continue
+                if not allow_reductions:
+                    skipped_reductions.append(item.name)
+                    continue
+                await self._request("POST", f"/api/stock/products/{product_id}/consume", json={
+                    "amount": current - item.quantity, "location_id": location_id,
+                })
+                verify = await self.async_list("stock")
+                actual = sum(float(row.get("amount") or 0) for row in verify
+                             if int(row.get("product_id", -1)) == product_id
+                             and int(row.get("location_id", -1)) == location_id)
+                if actual != item.quantity:
+                    raise GrocyError(f"Grocy did not confirm stock reduction: {item.name}")
             amounts[(product_id, location_id)] = item.quantity
             updated.append(item.name)
         return {

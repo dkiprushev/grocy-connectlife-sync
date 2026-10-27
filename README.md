@@ -93,6 +93,21 @@ means the live round trip has not yet been safely completed.
 
 ## Data safety and configuration
 
+### Changes in 0.2.4
+
+- Add an explicitly invoked bidirectional inventory action with per-entry
+  persisted quantity baselines, a lock, readback verification, and conflict
+  reports. Initial differing quantities and concurrent edits are conflicts.
+- Support updates to existing ConnectLife inventory, verified against the
+  Android endpoint on an isolated test record, and explicit Grocy stock
+  reductions with readback. Deletions remain conflicts and are not applied.
+- Reject ambiguous shopping-list selection, avoid merging separate lists,
+  skip checked purchases, and deduplicate additions.
+- Inventory reconciliation matches normalized names and zones, not durable
+  cross-system IDs. Automatic scheduled sync and full shopping-list update,
+  deletion, and conflict resolution are not yet implemented. Test with
+  non-production data before relying on this action.
+
 ### Changes in 0.2.3
 
 - Read Grocy stock batches from `/api/objects/stock`, preserving the actual

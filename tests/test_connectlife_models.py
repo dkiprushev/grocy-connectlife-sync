@@ -1,11 +1,37 @@
 import unittest
 import asyncio
 
-from hisense_food_manager.connectlife import ConnectLifeFoodClient
+from hisense_food_manager.connectlife import ApiContractUnavailable, ConnectLifeFoodClient
 from hisense_food_manager.models import FoodZone, ShoppingItem
 
 
 class ConnectLifeModelTests(unittest.TestCase):
+    def test_shopping_read_requires_unambiguous_list(self):
+        client = ConnectLifeFoodClient(None)
+        async def fake_get(path, payload=None):
+            return {"shoppingLists": [
+                {"id": 1, "name": "One", "purchaseDataList": [{"cusFoodName": "Milk"}]},
+                {"id": 2, "name": "Two", "purchaseDataList": [{"cusFoodName": "Tea"}]},
+            ]}
+        client._async_get = fake_get
+        with self.assertRaises(ApiContractUnavailable):
+            asyncio.run(client.async_shopping_items())
+        self.assertEqual([x.name for x in asyncio.run(client.async_shopping_items("Two"))], ["Tea"])
+        with self.assertRaises(ApiContractUnavailable):
+            asyncio.run(client.async_shopping_items("Missing"))
+
+    def test_duplicate_target_names_fail_before_write(self):
+        client = ConnectLifeFoodClient(None)
+        async def fake_api():
+            return object(), "https://gateway.example", type("Fridge", (), {"puid": "p", "wifi_id": "w"})()
+        async def fake_get(path, payload=None):
+            return [{"id": 1, "name": "Same", "purchaseDataList": []},
+                    {"id": 2, "name": "Same", "purchaseDataList": []}]
+        client._async_api_and_refrigerator = fake_api
+        client._async_get = fake_get
+        with self.assertRaises(ApiContractUnavailable):
+            asyncio.run(client.async_sync_grocy_shopping([ShoppingItem("Milk")], "Same"))
+
     def test_inventory_row_is_normalized(self):
         item = ConnectLifeFoodClient._inventory_from_row({
             "cusFoodName": "Молоко", "roomCode": "freezer", "foodNum": "2",

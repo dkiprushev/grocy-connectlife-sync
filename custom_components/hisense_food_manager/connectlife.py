@@ -346,10 +346,17 @@ class ConnectLifeFoodClient:
             )
         return gateway_response.get("resultData", gateway_response)
 
-    async def async_shopping_items(self) -> list[ShoppingItem]:
-        """Return live shopping items, preserving vendor IDs for future sync."""
+    async def async_shopping_items(self, shopping_list_name: str | None = None) -> list[ShoppingItem]:
+        """Read exactly one list; do not mix unrelated household lists."""
         data = await self._async_get(self._SHOPPING_LIST_PATH)
-        rows = self._shopping_rows(data)
+        lists = self._shopping_list_containers(data)
+        if shopping_list_name:
+            selected = [row for row in lists if (row.get("shoppingListName") or row.get("name")) == shopping_list_name.strip()]
+        else:
+            selected = lists
+        if len(selected) != 1:
+            raise ApiContractUnavailable("Choose a unique ConnectLife shopping-list name")
+        rows = self._shopping_rows(selected[0])
         return [item for row in rows if (item := self._shopping_from_row(row))]
 
     async def async_shopping_lists(self) -> list[dict[str, Any]]:
@@ -532,10 +539,10 @@ class ConnectLifeFoodClient:
         api, _, refrigerator = await self._async_api_and_refrigerator()
         base = {"puid": self._device_id(refrigerator), "wifiId": self._wifi_id(refrigerator)}
         lists = self._shopping_list_containers(await self._async_get(self._SHOPPING_LIST_PATH, base))
-        target = next(
-            (row for row in lists if row.get("name") == target_name or row.get("shoppingListName") == target_name),
-            None,
-        )
+        matches = [row for row in lists if row.get("name") == target_name or row.get("shoppingListName") == target_name]
+        if len(matches) > 1:
+            raise ApiContractUnavailable("ConnectLife shopping-list name is ambiguous")
+        target = matches[0] if matches else None
         if target is None:
             await self._async_write(self._ADD_SHOPPING_PATH, {"shoppingListName": target_name, "purchases": []})
             lists = self._shopping_list_containers(await self._async_get(self._SHOPPING_LIST_PATH, base))
@@ -550,7 +557,12 @@ class ConnectLifeFoodClient:
             normalized_name(str(row.get("cusFoodName") or row.get("commonName") or row.get("foodName") or ""))
             for row in existing
         }
-        pending = [item for item in items if not item.checked and normalized_name(item.name) not in existing_names]
+        pending = []
+        for item in items:
+            key = normalized_name(item.name)
+            if not item.checked and key and key not in existing_names:
+                pending.append(item)
+                existing_names.add(key)
         if not pending:
             return {"shopping_list_name": target_name, "added": [], "added_count": 0,
                     "skipped_existing": [item.name for item in items], "skipped_count": len(items)}
@@ -682,27 +694,62 @@ class ConnectLifeFoodClient:
             raise ApiContractUnavailable(f"ConnectLife still returned inventory item {fridge_food_id}")
         return {"deleted": fridge_food_id, "verified": True}
 
-    async def async_sync_inventory_from_grocy(self, items: list[InventoryItem]) -> dict[str, Any]:
-        """Add Grocy stock missing from the mapped ConnectLife zones.
+    async def async_update_inventory_item(self, item: InventoryItem, existing: dict[str, Any]) -> dict[str, Any]:
+        """Update one uniquely matched vendor record and verify the quantity."""
+        identifier = existing.get("cusFoodId")
+        if identifier is None:
+            raise ApiContractUnavailable("ConnectLife inventory record has no cusFoodId")
+        payload = self._inventory_write_payload(item, room=existing, existing=existing)
+        payload["cusFoodId"] = identifier
+        _, _, refrigerator = await self._async_api_and_refrigerator()
+        response = await self._async_write(self._UPDATE_INVENTORY_PATH, {
+            "puid": self._device_id(refrigerator), "fridgeFoods": [payload],
+        })
+        if isinstance(response, dict) and response.get("resultCode", 0) not in (0, "0"):
+            raise ApiContractUnavailable(f"ConnectLife inventory update failed: {response}")
+        after = await self.async_inventory_rows()
+        found = next((row for row in after if str(row.get("cusFoodId")) == str(identifier)), None)
+        if found is None or self._number(found.get("foodNum"), -1) != item.quantity:
+            raise ApiContractUnavailable(f"ConnectLife did not confirm updated quantity: {item.name}")
+        return {"name": item.name, "cus_food_id": str(identifier), "quantity": item.quantity, "verified": True}
 
-        Existing user records are left untouched until update and conflict
-        semantics are independently validated. This makes the first reverse
-        synchronization safe and idempotent.
+    async def async_sync_inventory_from_grocy(self, items: list[InventoryItem]) -> dict[str, Any]:
+        """Apply an explicitly requested Grocy snapshot to ConnectLife.
+
+        Uniquely matched quantities are updated and read back. Ambiguous
+        names are reported instead of choosing a record. This directional
+        operation is not automatic two-way conflict resolution.
         """
-        existing = await self.async_inventory_items()
-        existing_keys = {(normalized_name(item.name), item.zone) for item in existing}
+        rows = await self.async_inventory_rows()
+        existing_rows: dict[tuple[str, FoodZone], list[dict[str, Any]]] = {}
+        for row in rows:
+            existing_item = self._inventory_from_row(row)
+            if existing_item:
+                existing_rows.setdefault((normalized_name(existing_item.name), existing_item.zone), []).append(row)
         added: list[str] = []
         skipped: list[str] = []
+        updated: list[str] = []
+        conflicts: list[str] = []
         for item in items:
             key = (normalized_name(item.name), item.zone)
-            if key in existing_keys:
-                skipped.append(item.name)
+            matches = existing_rows.get(key, [])
+            if len(matches) > 1:
+                conflicts.append(item.name)
+                continue
+            if matches:
+                existing_item = self._inventory_from_row(matches[0])
+                if existing_item and existing_item.quantity == item.quantity:
+                    skipped.append(item.name)
+                else:
+                    await self.async_update_inventory_item(item, matches[0])
+                    updated.append(item.name)
                 continue
             await self.async_add_inventory_item(item)
-            existing_keys.add(key)
+            existing_rows[key] = [{"cusFoodName": item.name, "roomCode": item.zone.value, "foodNum": item.quantity}]
             added.append(item.name)
         return {"added": added, "added_count": len(added), "skipped_existing": skipped,
-                "skipped_count": len(skipped)}
+                "skipped_count": len(skipped), "updated": updated, "updated_count": len(updated),
+                "conflicts": conflicts, "conflict_count": len(conflicts)}
 
     async def async_test_inventory_roundtrip(self) -> dict[str, Any]:
         """Create and remove one clearly-labelled refrigerator test item."""

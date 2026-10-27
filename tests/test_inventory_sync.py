@@ -10,6 +10,26 @@ from hisense_food_manager.models import FoodZone, InventoryItem
 
 
 class ConnectLifeInventorySyncTests(unittest.TestCase):
+    def test_update_uses_real_identifier_and_checks_readback(self) -> None:
+        client = ConnectLifeFoodClient(None)
+        calls = []
+        async def api():
+            return object(), "https://example.invalid", type("Fridge", (), {"puid": "p"})()
+        async def write(path, payload):
+            calls.append((path, payload))
+            return {"resultCode": 0}
+        async def rows():
+            return [{"cusFoodId": 42, "foodNum": 4}]
+        client._async_api_and_refrigerator = api
+        client._async_write = write
+        client.async_inventory_rows = rows
+        row = {"cusFoodId": 42, "cusFoodName": "Probe", "roomId": 8,
+               "roomCode": "refrigerator", "foodUnitId": 5, "foodNum": 1}
+        result = asyncio.run(client.async_update_inventory_item(InventoryItem("Probe", FoodZone.FRIDGE, 4), row))
+        self.assertTrue(result["verified"])
+        self.assertEqual(calls[0][1]["fridgeFoods"][0]["cusFoodId"], 42)
+        self.assertEqual(calls[0][1]["fridgeFoods"][0]["foodNum"], 4)
+
     def test_android_inventory_routes_are_explicit(self) -> None:
         self.assertEqual(ConnectLifeFoodClient._ADD_INVENTORY_PATH, "fridge/pu/add_fridge_food")
         self.assertEqual(ConnectLifeFoodClient._UPDATE_INVENTORY_PATH, "fridge/pu/update_fridge_food")
@@ -31,22 +51,26 @@ class ConnectLifeInventorySyncTests(unittest.TestCase):
         client = ConnectLifeFoodClient(None)
         added: list[str] = []
 
-        async def existing() -> list[InventoryItem]:
-            return [InventoryItem("Молоко", FoodZone.FRIDGE, 1)]
+        async def existing() -> list[dict]:
+            return [{"cusFoodName": "Молоко", "roomCode": "refrigerator", "foodNum": 1, "cusFoodId": 12}]
 
         async def add(item: InventoryItem) -> dict:
             added.append(item.name)
             return {"name": item.name, "fridge_food_id": "99"}
 
-        client.async_inventory_items = existing
+        async def update(item: InventoryItem, row: dict) -> dict:
+            return {"verified": True}
+
+        client.async_inventory_rows = existing
         client.async_add_inventory_item = add
+        client.async_update_inventory_item = update
         result = asyncio.run(client.async_sync_inventory_from_grocy([
             InventoryItem("Молоко", FoodZone.FRIDGE, 2),
             InventoryItem("Тестовая кола", FoodZone.FRIDGE, 1),
         ]))
         self.assertEqual(added, ["Тестовая кола"])
         self.assertEqual(result["added"], ["Тестовая кола"])
-        self.assertEqual(result["skipped_existing"], ["Молоко"])
+        self.assertEqual(result["updated"], ["Молоко"])
 
 
 class GrocyInventorySyncTests(unittest.TestCase):

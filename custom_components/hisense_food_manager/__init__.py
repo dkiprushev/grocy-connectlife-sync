@@ -24,6 +24,7 @@ from .const import (
 )
 from .grocy import GrocyClient
 from .models import FoodZone, InventoryItem
+from .coordinator import InventoryCoordinator
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -53,6 +54,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Create the local Grocy client and register the read-only probe once."""
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
+    from homeassistant.helpers.storage import Store
 
     runtime = {
         "grocy": GrocyClient(
@@ -68,6 +70,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await auth.async_login()
         runtime["auth"] = auth
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+    runtime["inventory_coordinator"] = InventoryCoordinator(
+        runtime["grocy"], ConnectLifeFoodClient(hass),
+        Store(hass, 1, f"{DOMAIN}_inventory_{entry.entry_id}"),
+    )
 
     if not hass.services.has_service(DOMAIN, SERVICE_PROBE_SHOPPING_LIST):
         async def probe_shopping_list(call: ServiceCall) -> dict:
@@ -113,6 +119,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(DOMAIN, SERVICE_GET_UNITS, get_units, supports_response="only")
         def grocy_client() -> GrocyClient:
             return hass.data[DOMAIN][entry.entry_id]["grocy"]
+        async def sync_inventory_bidirectional(call: ServiceCall) -> dict:
+            return await hass.data[DOMAIN][entry.entry_id]["inventory_coordinator"].async_sync()
+        hass.services.async_register(DOMAIN, "sync_inventory_bidirectional", sync_inventory_bidirectional, supports_response="only")
         async def get_grocy_snapshot(call: ServiceCall) -> dict:
             return await grocy_client().async_snapshot()
         hass.services.async_register(DOMAIN, SERVICE_GET_GROCY_SNAPSHOT, get_grocy_snapshot, supports_response="only")
@@ -134,7 +143,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return await grocy_client().async_shopping_roundtrip_test()
         hass.services.async_register(DOMAIN, SERVICE_TEST_GROCY_SHOPPING_ROUNDTRIP, test_grocy_shopping_roundtrip, supports_response="only")
         async def import_shopping_to_grocy(call: ServiceCall) -> dict:
-            items = await ConnectLifeFoodClient(hass).async_shopping_items()
+            items = await ConnectLifeFoodClient(hass).async_shopping_items(call.data.get("shopping_list_name"))
             return await grocy_client().async_import_shopping_list(items)
         hass.services.async_register(DOMAIN, SERVICE_IMPORT_SHOPPING_TO_GROCY, import_shopping_to_grocy, supports_response="only")
         async def sync_grocy_shopping_to_connectlife(call: ServiceCall) -> dict:
@@ -217,4 +226,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_TEST_CONNECTLIFE_INVENTORY_ROUNDTRIP)
         hass.services.async_remove(DOMAIN, SERVICE_STAGE_GROCY_INVENTORY_ITEM)
         hass.services.async_remove(DOMAIN, SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM)
+        hass.services.async_remove(DOMAIN, "sync_inventory_bidirectional")
     return True

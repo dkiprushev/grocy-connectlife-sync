@@ -25,6 +25,9 @@ delete_shopping_list:
 get_inventory:
   name: Получить инвентарь
   description: Читает текущий инвентарь холодильника без изменения данных.
+sync_inventory_bidirectional:
+  name: Синхронизировать инвентарь в обе стороны
+  description: Сравнивает остатки с последним подтверждённым состоянием и переносит односторонние изменения. Конфликты и удаления сообщает без применения.
 get_catalog:
   name: Получить каталог продуктов
   description: Читает каталог продуктов ConnectLife.
@@ -52,6 +55,13 @@ test_grocy_shopping_roundtrip:
 import_shopping_to_grocy:
   name: Импортировать список покупок в Grocy
   description: Добавляет в Grocy отсутствующие позиции списка покупок из холодильника; повторный импорт не создаёт дублей.
+  fields:
+    shopping_list_name:
+      name: Список ConnectLife
+      description: Точное имя исходного списка. Если список всего один, поле можно оставить пустым.
+      required: false
+      selector:
+        text:
 test_connectlife_shopping_roundtrip:
   name: Проверить запись списка ConnectLife
   description: На пустом списке добавляет один временный товар из каталога, удаляет его и подтверждает очистку.
