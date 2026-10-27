@@ -107,6 +107,10 @@ means the live round trip has not yet been safely completed.
   cross-system IDs. Automatic scheduled sync and full shopping-list update,
   deletion, and conflict resolution are not yet implemented. Test with
   non-production data before relying on this action.
+- Live HA test: changing a test item's quantity from 3 to 4 in Grocy was
+  reflected in ConnectLife; changing it from 4 to 2 in ConnectLife was then
+  reflected in Grocy. Initial differing quantities produced conflict reports;
+  a freezer item reported the missing Grocy Freezer location.
 
 ### Changes in 0.2.3
 
