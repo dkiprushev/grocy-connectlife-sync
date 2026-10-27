@@ -84,14 +84,24 @@ means the live round trip has not yet been safely completed.
 | Create an empty ConnectLife shopping list | Working | Confirmed in local API testing. |
 | Delete a ConnectLife shopping list | Working | Confirmed in local API testing. |
 | Rename a ConnectLife list / update a list with `purchases` | Working locally | Android authentication and signed updates have been verified with empty and populated test lists, followed by readback. |
-| ConnectLife → Grocy shopping-list import | Implemented, not live-verified | Requires a responsive Grocy REST transport in the installed HA instance. |
-| Grocy → ConnectLife shopping-list export | Partially verified | Local tests with Grocy-shaped items verified add, repeat without duplicates, and append while retaining existing purchases. The HA-to-Grocy flow still needs live testing. |
-| ConnectLife → Grocy inventory import | Implemented, not live-verified | Inventory reads work; end-to-end Grocy writing still needs live verification. |
-| Grocy → ConnectLife inventory export | Partially verified | Local Android add/read/delete of an isolated refrigerator item succeeded. The full HA-to-Grocy flow remains unverified. |
-| Grocy API reachability from Home Assistant | Needs investigation | Requests have a 15-second timeout; end-to-end HA-to-Grocy access still needs live verification. |
+| ConnectLife → Grocy shopping-list import | Partially verified | HA recognised an existing item; creation of a new item remains unverified. |
+| Grocy → ConnectLife shopping-list export | Verified via HA | An item was added and a repeat did not duplicate it. |
+| ConnectLife → Grocy inventory import | Verified via HA | A test item was created with its quantity in Fridge. |
+| Grocy → ConnectLife inventory export | Fix pending live verification | Grocy's aggregate stock endpoint omits location IDs; 0.2.3 reads stock batches instead. |
+| Grocy API reachability from Home Assistant | Verified | Snapshot and product, stock, and shopping-list write/cleanup tests passed through HA. |
 | Full automatic two-way synchronization | Not ready | It must not be presented as working until all four directions above are verified with real data and loop prevention. |
 
 ## Data safety and configuration
+
+### Changes in 0.2.3
+
+- Read Grocy stock batches from `/api/objects/stock`, preserving the actual
+  location and summing multiple batches of a product in the same location.
+- Compare summed stock before adding quantities; never silently reduce it.
+- Expose the required empty-list name for the ConnectLife shopping write test
+  in the Home Assistant action form.
+- Add regression coverage for multiple batches and unmapped locations. The
+  end-to-end export must still be verified after deploying this version.
 
 - The config flow accepts the Grocy URL/API key and ConnectLife account data;
   no change to `secrets.yaml` or `.storage` is required.
@@ -136,11 +146,7 @@ Credentials, API keys, exported Home Assistant config entries, `.storage`, and
 
 ## Next milestones
 
-1. Add timeouts and precise diagnostics to the Grocy client; verify live Grocy
-   read/write with a non-destructive fixture.
-2. Capture or obtain a documented ConnectLife contract for updating shopping
-   lists containing purchases.
-3. Implement stable item matching, conflict policy, and loop prevention.
-4. Implement the missing Grocy inventory → ConnectLife write direction.
-5. Verify each direction independently before enabling scheduled automatic
+1. Verify the corrected inventory export and new-item shopping import in HA.
+2. Implement stable item matching, conflict policy, and loop prevention.
+3. Verify each direction independently before enabling scheduled automatic
    synchronization.

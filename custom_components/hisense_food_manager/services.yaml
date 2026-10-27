@@ -55,6 +55,13 @@ import_shopping_to_grocy:
 test_connectlife_shopping_roundtrip:
   name: Проверить запись списка ConnectLife
   description: На пустом списке добавляет один временный товар из каталога, удаляет его и подтверждает очистку.
+  fields:
+    shopping_list_name:
+      name: Список ConnectLife
+      description: Точное имя пустого тестового списка покупок ConnectLife.
+      required: true
+      selector:
+        text:
 sync_grocy_shopping_to_connectlife:
   name: Синхронизировать покупки Grocy в ConnectLife
   description: Добавляет отсутствующие незавершённые позиции Grocy в явно указанный список ConnectLife. Существующие покупки не изменяет и не дублирует.

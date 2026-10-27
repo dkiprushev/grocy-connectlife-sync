@@ -188,7 +188,7 @@ class GrocyClient:
         """
         products, locations, stock, units = await asyncio.gather(
             self.async_list("products"), self.async_list("locations"),
-            self._request("GET", "/api/stock"), self.async_list("quantity_units"),
+            self.async_list("stock"), self.async_list("quantity_units"),
         )
         product_by_id = {
             int(row["id"]): row for row in products
@@ -204,7 +204,7 @@ class GrocyClient:
             for row in locations
             if row.get("id") is not None and row.get("name") == self.location_name(zone)
         }
-        items: list[InventoryItem] = []
+        items: dict[tuple[int, int], InventoryItem] = {}
         for row in stock if isinstance(stock, list) else []:
             product_id = row.get("product_id")
             location_id = row.get("location_id")
@@ -220,13 +220,16 @@ class GrocyClient:
                 continue
             if quantity <= 0:
                 continue
-            items.append(InventoryItem(
-                name=str(product["name"]), zone=zone, quantity=quantity,
+            key = (int(product_id), int(location_id))
+            previous = items.get(key)
+            dates = [date for date in (previous.best_before if previous else None, row.get("best_before_date")) if date]
+            items[key] = InventoryItem(
+                name=str(product["name"]), zone=zone, quantity=quantity + (previous.quantity if previous else 0),
                 unit=unit_by_id.get(product.get("qu_id_stock")),
-                best_before=row.get("best_before_date") or None,
+                best_before=min(dates) if dates else None,
                 vendor_id=f"{product_id}:{location_id}",
-            ))
-        return items
+            )
+        return list(items.values())
 
     async def async_sync_inventory_from_connectlife(self, items: list[InventoryItem]) -> dict:
         """Add missing mapped Grocy stock from a ConnectLife inventory snapshot.
@@ -237,7 +240,7 @@ class GrocyClient:
         """
         products, locations, units, stock = await asyncio.gather(
             self.async_list("products"), self.async_list("locations"),
-            self.async_list("quantity_units"), self._request("GET", "/api/stock"),
+            self.async_list("quantity_units"), self.async_list("stock"),
         )
         if not units:
             raise GrocyError("Grocy has no quantity units")
@@ -248,11 +251,11 @@ class GrocyClient:
             normalized_name(str(row.get("name", ""))): int(row["id"])
             for row in products if row.get("id") is not None and row.get("name")
         }
-        amounts = {
-            (int(row["product_id"]), int(row["location_id"])): float(row.get("amount") or 0)
-            for row in stock if isinstance(row, dict)
-            and row.get("product_id") is not None and row.get("location_id") is not None
-        }
+        amounts: dict[tuple[int, int], float] = {}
+        for row in stock:
+            if row.get("product_id") is not None and row.get("location_id") is not None:
+                key = (int(row["product_id"]), int(row["location_id"]))
+                amounts[key] = amounts.get(key, 0) + float(row.get("amount") or 0)
         created: list[str] = []
         updated: list[str] = []
         unchanged: list[str] = []
@@ -321,16 +324,19 @@ class GrocyClient:
             })
         else:
             product_id = int(product["id"])
-        await self._request("POST", f"/api/stock/products/{product_id}/add", json={
-            "amount": item.quantity, "location_id": location["id"],
-        })
-        stock = await self._request("GET", "/api/stock")
-        if not any(
-            int(row.get("product_id", -1)) == product_id
-            and int(row.get("location_id", -1)) == int(location["id"])
-            and float(row.get("amount") or 0) == item.quantity
-            for row in stock if isinstance(row, dict)
-        ):
+        stock = await self.async_list("stock")
+        def total(rows: list[dict]) -> float:
+            return sum(float(row.get("amount") or 0) for row in rows
+                       if int(row.get("product_id", -1)) == product_id
+                       and int(row.get("location_id", -1)) == int(location["id"]))
+        current = total(stock)
+        if current > item.quantity:
+            raise GrocyError(f"Refusing to reduce staged stock: {item.name}")
+        if current < item.quantity:
+            await self._request("POST", f"/api/stock/products/{product_id}/add", json={
+                "amount": item.quantity - current, "location_id": location["id"],
+            })
+        if total(await self.async_list("stock")) != item.quantity:
             raise GrocyError(f"Grocy did not return staged stock: {item.name}")
         return {"name": item.name, "zone": item.zone.value, "quantity": item.quantity,
                 "product_id": product_id, "created_product": created, "verified": True}

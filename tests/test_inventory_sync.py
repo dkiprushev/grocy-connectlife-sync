@@ -59,6 +59,7 @@ class GrocyInventorySyncTests(unittest.TestCase):
                 "products": [{"id": 4, "name": "Молоко"}],
                 "locations": [{"id": 2, "name": "Fridge"}],
                 "quantity_units": [{"id": 1, "name": "pcs"}],
+                "stock": [{"product_id": 4, "location_id": 2, "amount": 1}],
             }[entity]
 
         async def request(method: str, path: str, **kwargs) -> dict | list:
@@ -82,6 +83,7 @@ class GrocyInventorySyncTests(unittest.TestCase):
             return {
                 "products": [], "locations": [{"id": 2, "name": "Fridge"}],
                 "quantity_units": [{"id": 1, "name": "pcs"}],
+                "stock": [],
             }[entity]
 
         async def request(method: str, path: str, **kwargs) -> dict | list:
@@ -105,6 +107,7 @@ class GrocyInventorySyncTests(unittest.TestCase):
                 "products": [{"id": 4, "name": "Молоко"}],
                 "locations": [{"id": 2, "name": "Fridge"}],
                 "quantity_units": [{"id": 1, "name": "pcs"}],
+                "stock": [{"product_id": 4, "location_id": 2, "amount": 1}, {"product_id": 4, "location_id": 2, "amount": 1}],
             }[entity]
 
         async def request(method: str, path: str, **kwargs) -> dict | list:
@@ -120,4 +123,21 @@ class GrocyInventorySyncTests(unittest.TestCase):
         ]))
         self.assertEqual(writes, [])
         self.assertEqual(result["skipped_reductions"], ["Молоко"])
+
+    def test_inventory_aggregates_batches_only_in_mapped_locations(self) -> None:
+        client = GrocyClient(None, "http://grocy/", "test")
+        async def rows(entity: str) -> list[dict]:
+            return {
+                "products": [{"id": 4, "name": "Milk", "qu_id_stock": 1}],
+                "locations": [{"id": 2, "name": "Fridge"}, {"id": 3, "name": "Storage"}],
+                "quantity_units": [{"id": 1, "name": "pcs"}],
+                "stock": [{"product_id": 4, "location_id": 2, "amount": 1, "best_before_date": "2026-12-01"},
+                          {"product_id": 4, "location_id": 2, "amount": 2, "best_before_date": "2026-11-01"},
+                          {"product_id": 4, "location_id": 3, "amount": 9}],
+            }[entity]
+        client.async_list = rows
+        items = asyncio.run(client.async_inventory_items())
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].quantity, 3)
+        self.assertEqual(items[0].best_before, "2026-11-01")
 
