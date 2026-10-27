@@ -93,9 +93,15 @@ means the live round trip has not yet been safely completed.
 
 ## Data safety and configuration
 
+### Changes in 0.2.7
+
+- Change the optional periodic automation interval from 15 minutes to one
+  minute for more timely shopping-list updates. Polling latency and vendor
+  limits are not guaranteed; overlapping scheduled runs are skipped.
+
 ### Changes in 0.2.6
 
-- Add an optional 15-minute Home Assistant automation blueprint. It must be
+- Add an optional Home Assistant automation blueprint. It must be
   imported and enabled explicitly, and reports conflicts and errors to the
   Home Assistant log. Installing the integration does not activate it.
 
@@ -157,12 +163,15 @@ means the live round trip has not yet been safely completed.
 Home Assistant can run the two bidirectional actions using an automation.
 The optional blueprint at
 `blueprints/automation/grocy_connectlife_sync/periodic_sync.yaml` runs every
-15 minutes, uses `mode: single` to avoid overlapping executions, and logs
+minute, uses `mode: single` to avoid overlapping executions, and logs
 conflicts and errors. Import it into **Settings → Automations & scenes →
 Blueprints**, create an automation, and select the exact ConnectLife list
 name and Grocy list ID. Creating and enabling that automation authorizes
 periodic writes in both directions; it is not enabled by installing the
-integration. Its interval can be changed in a copied blueprint.
+integration. The delay is not guaranteed: slow requests, failures and skipped
+overlapping runs can make it longer than a minute. Its interval can be changed
+in a copied blueprint. This polls both upstream systems every minute; vendor
+rate limits and long-term reliability are not yet verified.
 
 The blueprint does not resolve conflicts or propagate deletions. Review the
 existing quantity conflicts and unmapped locations before enabling it. A
