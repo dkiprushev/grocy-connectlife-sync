@@ -58,7 +58,10 @@ class ConnectLifeFoodClient:
     _FOOD_MANAGER_APP_ID = "47110563037231"
     _FOOD_MANAGER_APP_SECRET = "yfjLvJutkNLNS7x0aV6nRLBBM7iRJ-IA6dy6U_J6wGR4t50DtDBLXQsDS2tKqSVt"
     _FOOD_MANAGER_API_VERSION = "8.1"
-    _ANDROID_SOURCE_ID = "td0010010000"
+    _CDC_USER_KEY = "AKdhV1WM7CbP"
+    _CDC_USER_SECRET = "oEenVnD+ZPSZyYpN2lmZFBsRGV0+PxCH"
+    _ANDROID_SOURCE_ID_PREFIX = "td0010010000"
+    _android_source_id: str | None = None
     _HENC_KEY = b"aaaabbbbccccddddeeeeffffgggghhhh"
     _HENC_IV = b"aaaabbbbccccdddd"
     _SIGN_SUFFIX = "D9519A4B756946F081B7BB5B5E8D1197"
@@ -169,21 +172,37 @@ class ConnectLifeFoodClient:
         return str(value)
 
     @classmethod
+    def _android_source_identifier(cls) -> str:
+        """Return the stable-per-installation source ID used by Android.
+
+        Android generates this once with the ``td0010010000`` prefix and a
+        UUID-derived MD5 suffix, then stores it in shared preferences.  A
+        process-local value gives this client the same stable identity for its
+        whole authentication and request session without persisting a token or
+        identifier in HA storage.
+        """
+        if cls._android_source_id is None:
+            value = str(uuid.uuid1()).replace("-", "").encode()
+            cls._android_source_id = cls._ANDROID_SOURCE_ID_PREFIX + hashlib.md5(value).hexdigest()
+        return cls._android_source_id
+
+    @classmethod
     def _android_signed_request(
         cls, access_token: str | None, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Reproduce ConnectLife Android's BaseConfigProcessor signature."""
+        timestamp = int(time.time() * 1000)
+        nonce = f"{uuid.uuid1()}{timestamp}"
+        for _ in range(6):
+            nonce = hashlib.md5(nonce.encode()).hexdigest()
         request = {
             "appId": cls._FOOD_MANAGER_APP_ID,
             "languageId": "12",
-            # Android calls Uuid.v1 and MD5-encodes its textual value.
-            # The Android implementation removes UUID separators before MD5.
-            "randStr": hashlib.md5(str(uuid.uuid1()).replace("-", "").encode()).hexdigest(),
-            "sourceId": cls._ANDROID_SOURCE_ID,
-            # Android gets microseconds from DateTime and divides by 1000
-            # before placing the value in the request: Unix milliseconds.
-            "timeStamp": int(time.time() * 1000),
-            "timezone": "3.0",
+            "randStr": nonce,
+            "sourceId": cls._android_source_identifier(),
+            "timeStamp": timestamp,
+            # ``flutter_timezone`` supplies an IANA zone name on Android.
+            "timezone": "Europe/Kyiv",
             "version": cls._FOOD_MANAGER_API_VERSION,
             **payload,
         }
@@ -194,6 +213,7 @@ class ConnectLifeFoodClient:
             request["accessToken"] = access_token
         canonical = "&".join(
             f"{key}={cls._android_value(request[key])}" for key in sorted(request)
+            if request[key] is not None and request[key] != "" and request[key] != [] and request[key] != {}
         )
         # The Android APK uses SHA-1 for the request signature. MD5 above is
         # only used to derive the compact random-string value.
@@ -224,20 +244,13 @@ class ConnectLifeFoodClient:
         return gateway_base_url.replace("clife-eu-gateway.", "auth-gateway.")
 
     async def _async_android_post(
-        self, api: Any, session: Any, url: str, request_data: dict[str, Any]
+        self, api: Any, session: Any, url: str, request_data: dict[str, Any], *, encrypted: bool = True
     ) -> dict[str, Any]:
         """Post through Android's encrypted request interceptor."""
-        # ``ClHencInterceptor`` replaces Dio's request data with the JSON
-        # string ``"HENC-…"``.  It does *not* send ``{"data": "HENC-…"}``.
-        # The latter reaches the gateway but produces a false signature error
-        # for structured payloads such as ``purchases``.
         async with session.post(
             url,
-            data=json.dumps(self._android_henc_body(request_data)["data"]),
-            headers={
-                "User-Agent": "ConnectLife/2.17.0 (Android)",
-                "Content-Type": "application/json",
-            },
+            data=(self._android_henc_body(request_data)["data"] if encrypted else json.dumps(request_data, ensure_ascii=False, separators=(",", ":"))),
+            headers={"Content-Type": "application/json"},
         ) as response:
             if response.status != 200:
                 body = await response.text()
@@ -268,54 +281,37 @@ class ConnectLifeFoodClient:
         raise ApiContractUnavailable("ConnectLife Android authorization returned no access token")
 
     async def _async_food_manager_access_token(self, api: Any, gateway_base_url: str) -> str:
-        """Exchange the account UID for the Android Food Manager session token.
-
-        Food Manager write methods are authorised by a session issued to the
-        mobile app identity, not by the appliance client's OAuth token.  The
-        Android application obtains that session through ``authorize_uid``.
-        Reusing the account client's Gigya sign-in only supplies the UID; no
-        credentials or tokens are persisted by this component.
-        """
+        """Sign in using the Android CDC account flow."""
         authorize_base_url = self._food_manager_authorize_base_url(gateway_base_url)
         async with api._client_session() as session:  # noqa: SLF001 - installed client owns account login
-            # Android first creates an anonymous application session.  There
-            # is no mobile access token yet, so the bootstrap request must not
-            # contain the appliance gateway OAuth token.
-            anonymous_response = await self._async_android_post(
-                api,
-                session,
-                f"{authorize_base_url}/{self._ANDROID_ANONYMOUS_LOGIN_PATH}",
-                self._android_signed_request(
-                    None, {"loginName": "", "password": ""}
-                ),
-            )
-            anonymous_token = self._android_result_token(anonymous_response)
-            uid, gigya_cookie = await api._login_to_gigya(session)  # noqa: SLF001
-            # ``authorize_uid`` is the bootstrap exchange that creates the
-            # Food Manager access token.  It uses the Gigya JWT produced from
-            # the account session; appliance OAuth has a different audience.
-            gigya_jwt = await api._fetch_jwt(session, gigya_cookie)  # noqa: SLF001
+            uid, _ = await api._login_to_gigya(session)  # noqa: SLF001
+            async with session.post(api.jwt_url, data={
+                "APIKey": api.api_key, "UID": uid,
+                "userKey": self._CDC_USER_KEY, "secret": self._CDC_USER_SECRET,
+            }) as response:
+                if response.status != 200:
+                    raise ApiContractUnavailable(f"ConnectLife CDC JWT request returned HTTP {response.status}")
+                jwt_response = await api._json(response, endpoint=api.jwt_url)  # noqa: SLF001
+            gigya_jwt = jwt_response.get("id_token")
+            if not isinstance(gigya_jwt, str) or not gigya_jwt:
+                raise ApiContractUnavailable("ConnectLife CDC JWT request returned no token")
+            country = getattr(getattr(self._hass, "config", None), "country", None) or "UA"
             sign_in_response = await self._async_android_post(
                 api,
                 session,
-                f"{authorize_base_url}/{self._ANDROID_TOKEN_SIGN_IN_PATH}",
+                f"{authorize_base_url}/br/login",
                 self._android_signed_request(
-                    anonymous_token,
+                    None,
                     {
                         "thirdType": "CDC",
-                        "thirdClientId": self._FOOD_MANAGER_APP_ID,
+                        "thirdClientId": uid,
                         "idToken": gigya_jwt,
+                        "platformId": "5",
+                        "countryCode": country,
                     },
-                ),
+                ), encrypted=False,
             )
-            android_token = self._android_result_token(sign_in_response)
-            authorize_response = await self._async_android_post(
-                api,
-                session,
-                f"{authorize_base_url}/{self._AUTHORIZE_UID_PATH}",
-                self._android_signed_request(android_token, {"uid": uid}),
-            )
-        return self._android_result_token(authorize_response)
+        return self._android_result_token(sign_in_response)
 
     async def _async_write(self, path: str, payload: dict[str, Any]) -> Any:
         """Send a Food Manager write in the Android application's format."""
@@ -426,6 +422,69 @@ class ConnectLifeFoodClient:
         if any(row["id"] == target["id"] for row in await self.async_shopping_lists()):
             raise ApiContractUnavailable("ConnectLife still returned the deleted shopping list")
         return {"deleted": True, "name": name}
+
+    @staticmethod
+    def _purchase_form_data(purchase: dict[str, Any]) -> dict[str, Any]:
+        """Rebuild Android's ``ShoppingListItemModel.toFormData`` payload."""
+        payload = {
+            key: purchase.get(key)
+            for key in (
+                "purchaseId",
+                "status",
+                "fridgePurchaseId",
+                "foodId",
+                "purchaseDate",
+            )
+        }
+        payload.update(
+            {
+                "cusFoodName": purchase.get("cusFoodName"),
+                "status": purchase.get("status", 0),
+                "enteringSource": 0,
+            }
+        )
+        if purchase.get("foodId") is not None:
+            payload["foodId"] = purchase["foodId"]
+        if purchase.get("commonName") is not None:
+            payload["commonName"] = purchase["commonName"]
+        return {key: value for key, value in payload.items() if value is not None}
+
+    async def async_rename_shopping_list(
+        self, shopping_list_id: str, shopping_list_name: str
+    ) -> dict[str, Any]:
+        """Rename one existing list through Android's update DTO and verify it.
+
+        The method intentionally replays every existing purchase with its
+        server IDs.  Android's ``ShoppingListModel.toFormData`` always sends
+        ``purchases``; omitting it changes the signed request contract.
+        """
+        name = shopping_list_name.strip()
+        if not shopping_list_id or not name:
+            raise ApiContractUnavailable("A shopping-list ID and name are required")
+        containers = self._shopping_list_containers(
+            await self._async_food_request(self._SHOPPING_LIST_PATH, {})
+        )
+        target = next((row for row in containers if str(row.get("id")) == str(shopping_list_id)), None)
+        if target is None:
+            raise ApiContractUnavailable("ConnectLife shopping list was not found")
+        request = {
+            "shoppingListId": target["id"],
+            "shoppingListName": name,
+            "purchases": [
+                self._purchase_form_data(row)
+                for row in (target.get("purchaseDataList") or [])
+                if isinstance(row, dict)
+            ],
+        }
+        await self._async_write(self._UPDATE_SHOPPING_PATH, request)
+        after = self._shopping_list_containers(
+            await self._async_food_request(self._SHOPPING_LIST_PATH, {})
+        )
+        updated = next((row for row in after if str(row.get("id")) == str(shopping_list_id)), None)
+        actual_name = "" if updated is None else str(updated.get("shoppingListName") or updated.get("name") or "")
+        if actual_name != name:
+            raise ApiContractUnavailable("ConnectLife did not return the renamed shopping list")
+        return {"id": str(shopping_list_id), "old_name": str(target.get("shoppingListName") or target.get("name") or ""), "name": actual_name}
 
     @classmethod
     def _shopping_list_containers(cls, value: Any) -> list[dict[str, Any]]:

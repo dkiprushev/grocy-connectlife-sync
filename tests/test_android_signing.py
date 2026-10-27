@@ -19,8 +19,12 @@ class AndroidSigningTests(unittest.TestCase):
 
         self.assertNotIn("appSecret", request)
         self.assertEqual(request["version"], "8.1")
-        self.assertEqual(request["randStr"], hashlib.md5(b"uuidv1").hexdigest())
+        nonce = "uuid-v11234"
+        for _ in range(6):
+            nonce = hashlib.md5(nonce.encode()).hexdigest()
+        self.assertEqual(request["randStr"], nonce)
         self.assertEqual(request["timeStamp"], 1234)
+        self.assertTrue(request["sourceId"].startswith("td0010010000"))
         canonical = "&".join(
             f"{key}={ConnectLifeFoodClient._android_value(request[key])}"
             for key in sorted(key for key in request if key != "sign")
@@ -41,7 +45,7 @@ class AndroidSigningTests(unittest.TestCase):
         self.assertEqual(request["uid"], "account-uid")
         self.assertTrue(request["sign"])
 
-    def test_android_authorization_chains_anonymous_cdc_and_authorize_uid(self) -> None:
+    def test_android_authorization_uses_cdc_jwt_and_br_login(self) -> None:
         class Response:
             status = 200
 
@@ -62,17 +66,16 @@ class AndroidSigningTests(unittest.TestCase):
             async def __aexit__(self, *_args):
                 return None
 
-            def post(self, _url, *, data, headers):
-                # The interceptor sends a JSON string containing HENC data,
-                # not an object with a ``data`` property.
-                self.request_json = json.loads(data)
-                self.requests.append(json.loads(self.request_json))
+            def post(self, url, *, data, **kwargs):
+                self.requests.append((url, data))
                 return Response()
 
         class Api:
             def __init__(self):
                 self.session = Session()
                 self._access_token = None
+                self.jwt_url = "https://cdc.example/accounts.getJWT"
+                self.api_key = "api-key"
 
             def _client_session(self):
                 return self.session
@@ -80,32 +83,26 @@ class AndroidSigningTests(unittest.TestCase):
             async def _login_to_gigya(self, _session):
                 return "account-uid", "gigya-cookie"
 
-            async def _fetch_jwt(self, _session, cookie):
-                if cookie != "gigya-cookie":
-                    raise AssertionError("unexpected Gigya session")
-                return "gigya-jwt"
-
             async def _json(self, _response, *, endpoint):
-                return {"response": {"resultCode": 0, "resultData": "food-token"}}
+                if endpoint == self.jwt_url:
+                    return {"id_token": "gigya-jwt"}
+                return {"response": {"resultCode": 0, "accessToken": "food-token"}}
 
         async def verify() -> None:
             api = Api()
             client = ConnectLifeFoodClient(None)
-            with patch.object(
-                client,
-                "_android_henc_body",
-                side_effect=lambda request: {"data": json.dumps(request)},
-            ):
-                token = await client._async_food_manager_access_token(
-                    api, "https://clife-eu-gateway.hijuconn.com"
-                )
+            token = await client._async_food_manager_access_token(
+                api, "https://clife-eu-gateway.hijuconn.com"
+            )
             self.assertEqual(token, "food-token")
-            self.assertEqual(len(api.session.requests), 3)
-            self.assertEqual(api.session.requests[0]["loginName"], "")
-            self.assertNotIn("accessToken", api.session.requests[0])
-            self.assertEqual(api.session.requests[1]["idToken"], "gigya-jwt")
-            self.assertEqual(api.session.requests[2]["uid"], "account-uid")
-            self.assertEqual(api.session.requests[2]["accessToken"], "food-token")
+            self.assertEqual(len(api.session.requests), 2)
+            self.assertEqual(api.session.requests[0][1]["UID"], "account-uid")
+            url, body = api.session.requests[1]
+            self.assertTrue(url.endswith("/br/login"))
+            body = json.loads(body)
+            self.assertEqual(body["thirdClientId"], "account-uid")
+            self.assertEqual(body["idToken"], "gigya-jwt")
+            self.assertNotIn("accessToken", body)
 
         import asyncio
 
