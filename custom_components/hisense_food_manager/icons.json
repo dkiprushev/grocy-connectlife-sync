@@ -1,0 +1,9 @@
+{
+  "services": {
+    "sync_adaptive": {"service": "mdi:sync"},
+    "sync_inventory_bidirectional": {"service": "mdi:fridge-outline"},
+    "sync_shopping_bidirectional": {"service": "mdi:cart-outline"},
+    "get_inventory": {"service": "mdi:fridge-outline"},
+    "get_shopping_lists": {"service": "mdi:format-list-checks"}
+  }
+}

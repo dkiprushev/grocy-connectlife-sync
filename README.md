@@ -63,11 +63,11 @@ Both domains are intended to be bidirectional:
 | ConnectLife inventory → Grocy | Reflect refrigerator contents in Grocy stock at the mapped location. |
 | Grocy inventory → ConnectLife | Reflect Grocy stock at a mapped refrigerator location in the corresponding ConnectLife zone. |
 
-The safe rollout policy is add/update first. Automatic deletion must remain
-disabled until stable item matching, conflict resolution, and an explicit user
-decision on deletion semantics are implemented. Synchronization also needs
-source identifiers and loop prevention so that an update received from one
-system is not echoed back forever.
+Synchronization uses the last verified state and source identifiers to detect
+which side changed. An unambiguous deletion of a previously paired item is
+propagated; concurrent edits or changed identifiers are reported as conflicts.
+Initial matches still depend on normalized names and zones, so further live
+testing is required before unattended use.
 
 ## Current implementation status
 
@@ -92,6 +92,18 @@ means the live round trip has not yet been safely completed.
 | Full automatic two-way synchronization | Not ready | It must not be presented as working until all four directions above are verified with real data and loop prevention. |
 
 ## Data safety and configuration
+
+### Changes in 0.2.9
+
+- The ConnectLife `foodNum` and `status` fields were verified on a temporary
+  live list; shopping quantities and completion states can now be reconciled.
+- Previously verified paired identifiers allow one-sided deletions when the
+  remaining item is unchanged. Concurrent edits and changed IDs are conflicts.
+  Grocy stock removal applies only to the mapped location, not the product or
+  other locations. Full HA end-to-end deletion testing is still pending.
+- Previous name-only and quantity-only baselines are migrated conservatively:
+  they cannot authorize deletion until both sides have been matched again.
+- Refresh the icon and add action icons for Home Assistant.
 
 ### Changes in 0.2.8
 
@@ -162,8 +174,8 @@ means the live round trip has not yet been safely completed.
   no change to `secrets.yaml` or `.storage` is required.
 - Access and refresh tokens must never be committed, printed in diagnostics, or
   manually copied into source files.
-- The integration must never silently delete Grocy stock, ConnectLife inventory,
-  or shopping-list entries.
+- Propagated deletions are reported in the action response; ambiguous or
+  concurrently modified records are not deleted.
 - A write failure must leave the source system unchanged and expose a useful
   diagnostic error instead of guessing an alternative request payload.
 
@@ -185,12 +197,10 @@ successful exchange that direction returns to a one-minute interval. State is
 persisted over HA restarts; slow requests and skipped overlapping runs can add
 delay. Vendor rate limits and long-term reliability are not yet verified.
 
-The blueprint does not resolve conflicts or propagate deletions. Review the
-existing quantity conflicts and unmapped locations before enabling it. A
-Grocy quantity other than one in a shopping list remains a reported conflict,
-because the observed ConnectLife purchase DTO does not preserve quantities.
-The current matching uses normalized names, not stable cross-system IDs; do
-not use unattended sync for production data until these limits are resolved.
+The blueprint does not resolve conflicts; confirmed paired deletions are
+propagated. Review existing conflicts and mapped locations before enabling it.
+Initial matching uses normalized names, and full HA deletion testing is still
+pending; do not use unattended sync for production data until verified.
 
 This repository is structured as one HACS custom integration. After it is
 published on GitHub, install it once in Home Assistant:

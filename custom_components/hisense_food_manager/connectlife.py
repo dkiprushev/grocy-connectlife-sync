@@ -441,6 +441,8 @@ class ConnectLifeFoodClient:
                 "status",
                 "fridgePurchaseId",
                 "foodId",
+                "foodNum",
+                "foodUnitId",
                 "purchaseDate",
             )
         }
@@ -511,9 +513,7 @@ class ConnectLifeFoodClient:
     def _purchase_payload(item: ShoppingItem) -> dict[str, Any]:
         """The minimal Android DTO accepted by updateShoppingList.
 
-        ConnectLife's observed DTO contains no quantity field.  We preserve
-        Grocy's quantity in the service response, but do not invent an
-        unverified remote field which the gateway rejects.
+        The gateway preserves foodNum, verified with a temporary live list.
         """
         return {
             "cusFoodName": item.name,
@@ -521,6 +521,7 @@ class ConnectLifeFoodClient:
             "enteringSource": 0,
             "commonName": item.name,
             "purchaseDate": "",
+            "foodNum": item.quantity,
         }
 
     async def async_sync_grocy_shopping(
@@ -592,6 +593,45 @@ class ConnectLifeFoodClient:
         data = await self._async_get(self._INVENTORY_PATH)
         rows = self._inventory_rows(data)
         return [item for row in rows if (item := self._inventory_from_row(row))]
+
+    async def async_change_shopping_item(self, list_name: str, purchase_id: str,
+                                         *, quantity: float | None = None,
+                                         checked: bool | None = None, delete: bool = False) -> None:
+        """Change one identified item, preserving every other list item and its fields."""
+        _, _, fridge = await self._async_api_and_refrigerator()
+        base = {"puid": self._device_id(fridge), "wifiId": self._wifi_id(fridge)}
+        lists = self._shopping_list_containers(await self._async_get(self._SHOPPING_LIST_PATH, base))
+        matches = [row for row in lists if (row.get("shoppingListName") or row.get("name")) == list_name]
+        if len(matches) != 1:
+            raise ApiContractUnavailable("ConnectLife shopping-list name is not unique")
+        target = matches[0]
+        rows = target.get("purchaseDataList") or []
+        selected = [row for row in rows if str(row.get("purchaseId")) == purchase_id]
+        if len(selected) != 1:
+            raise ApiContractUnavailable("ConnectLife purchase identifier is missing or ambiguous")
+        purchases = []
+        for row in rows:
+            if str(row.get("purchaseId")) == purchase_id:
+                if delete:
+                    continue
+                payload = self._purchase_form_data(row)
+                if quantity is not None:
+                    payload["foodNum"] = quantity
+                if checked is not None:
+                    payload["status"] = int(checked)
+            else:
+                payload = self._purchase_form_data(row)
+            purchases.append(payload)
+        await self._async_write(self._UPDATE_SHOPPING_PATH, {**base, "shoppingListId": target["id"],
+                                 "shoppingListName": list_name, "purchases": purchases})
+        after = await self.async_shopping_items(list_name)
+        matches = [item for item in after if item.vendor_id == purchase_id]
+        if delete:
+            if matches:
+                raise ApiContractUnavailable("ConnectLife did not confirm purchase deletion")
+        elif len(matches) != 1 or (quantity is not None and matches[0].quantity != quantity) or (
+                checked is not None and matches[0].checked != checked):
+            raise ApiContractUnavailable("ConnectLife did not confirm purchase update")
 
     async def async_inventory_rows(self) -> list[dict[str, Any]]:
         """Return raw inventory DTOs with inherited room information.
@@ -1015,7 +1055,7 @@ class ConnectLifeFoodClient:
             return None
         return InventoryItem(name=name.strip(), zone=cls._zone(row.get("roomCode")),
             quantity=cls._number(row.get("foodNum")), unit=row.get("foodUnitCode"),
-            best_before=row.get("invalidTime"), vendor_id=str(row.get("fridgeFoodId") or row.get("foodId") or "") or None)
+            best_before=row.get("invalidTime"), vendor_id=str(row.get("cusFoodId") or row.get("fridgeFoodId") or "") or None)
 
     @classmethod
     def _shopping_from_row(cls, row: dict[str, Any]) -> ShoppingItem | None:
@@ -1024,7 +1064,7 @@ class ConnectLifeFoodClient:
             return None
         return ShoppingItem(name=name.strip(), quantity=cls._number(row.get("foodNum") or row.get("num")),
             unit=row.get("foodUnitCode") or row.get("unitName"),
-            checked=bool(row.get("collected") or row.get("checked") or row.get("status") == 1),
+            checked=bool(row.get("collected") or row.get("checked") or str(row.get("status")) == "1"),
             vendor_id=str(row.get("purchaseId") or row.get("shoppingId") or row.get("id") or "") or None)
 
     @classmethod

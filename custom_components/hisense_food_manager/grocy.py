@@ -139,6 +139,33 @@ class GrocyClient:
             ))
         return items
 
+    async def async_change_shopping_item(self, list_id: int, item_id: str, *,
+                                         quantity: float | None = None,
+                                         checked: bool | None = None, delete: bool = False) -> None:
+        """Modify only the requested list row and verify the result by rereading."""
+        rows = await self.async_list("shopping_list")
+        matching = [row for row in rows if str(row.get("id")) == item_id
+                    and int(row.get("shopping_list_id") or 1) == list_id]
+        if len(matching) != 1:
+            raise GrocyError("Grocy shopping-list row is missing or ambiguous")
+        if delete:
+            await self.async_delete("shopping_list", int(item_id))
+        else:
+            changes = {}
+            if quantity is not None:
+                changes["amount"] = quantity
+            if checked is not None:
+                changes["done"] = int(checked)
+            await self._request("PUT", f"/api/objects/shopping_list/{int(item_id)}", json=changes)
+        after = await self.async_shopping_items(list_id)
+        matches = [item for item in after if item.vendor_id == item_id]
+        if delete:
+            if matches:
+                raise GrocyError("Grocy did not confirm purchase deletion")
+        elif len(matches) != 1 or (quantity is not None and matches[0].quantity != quantity) or (
+                checked is not None and matches[0].checked != checked):
+            raise GrocyError("Grocy did not confirm purchase update")
+
     async def async_import_inventory(self, items: list[InventoryItem]) -> dict:
         """Import missing fridge products and one stock entry for each into Grocy.
 
@@ -316,6 +343,20 @@ class GrocyClient:
             "skipped_unmapped": skipped_unmapped,
             "skipped_unmapped_count": len(skipped_unmapped),
         }
+
+    async def async_delete_inventory_item(self, item: InventoryItem) -> None:
+        """Consume exactly the identified product's stock at its mapped location."""
+        if not item.vendor_id or ":" not in item.vendor_id:
+            raise GrocyError("Grocy stock location identity is missing")
+        product_id, location_id = (int(part) for part in item.vendor_id.split(":", 1))
+        before = [x for x in await self.async_inventory_items() if x.vendor_id == item.vendor_id]
+        if len(before) != 1 or before[0].quantity != item.quantity or normalized_name(before[0].name) != normalized_name(item.name):
+            raise GrocyError("Grocy stock changed before deletion")
+        await self._request("POST", f"/api/stock/products/{product_id}/consume", json={
+            "amount": item.quantity, "location_id": location_id,
+        })
+        if any(x.vendor_id == item.vendor_id for x in await self.async_inventory_items()):
+            raise GrocyError("Grocy did not confirm stock removal")
 
     async def async_stage_inventory_item(self, item: InventoryItem) -> dict:
         """Create or set one explicitly named Grocy stock item for a live E2E run."""
