@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import unittest
+import socket
 from unittest.mock import AsyncMock
 
 from hisense_food_manager.grocy import GrocyClient, GrocyError
@@ -12,6 +13,14 @@ from test_coordinator import Store
 
 
 class SnapshotSafetyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_only_default_published_endpoint_uses_ipv4(self):
+        from hisense_food_manager.const import DEFAULT_GROCY_URL
+        self.assertEqual(GrocyClient.session_family(DEFAULT_GROCY_URL), socket.AF_INET)
+        self.assertEqual(GrocyClient.session_family(DEFAULT_GROCY_URL + '/'), socket.AF_INET)
+        for url in ('http://[fd00::5]:9192', 'https://grocy.example', 'http://grocy.local:9192',
+                    'http://homeassistant.local:8080'):
+            self.assertEqual(GrocyClient.session_family(url), socket.AF_UNSPEC)
+
     async def test_live_nullable_android_purchase_compatibility(self):
         row = {'purchaseId': 17, 'cusFoodName': 'Milk', 'status': 0, 'foodNum': None}
         item = ConnectLifeFoodClient._shopping_from_row(row)

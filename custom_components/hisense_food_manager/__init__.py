@@ -69,7 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     runtime = {
         "grocy": GrocyClient(
-            async_get_clientsession(hass), entry.data[CONF_GROCY_URL], entry.data[CONF_GROCY_API_KEY]
+            async_get_clientsession(hass, family=GrocyClient.session_family(entry.data[CONF_GROCY_URL])),
+            entry.data[CONF_GROCY_URL], entry.data[CONF_GROCY_API_KEY]
         )
     }
     # Credentials live in the config entry. Tokens never do: this independent

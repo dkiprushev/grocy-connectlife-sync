@@ -1,6 +1,7 @@
 """Actual entry functions with a minimal HA boundary, not a live HA scheduler."""
 import sys
 import types
+import socket
 import unittest
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 import hisense_food_manager as integration
 from hisense_food_manager.auth import FoodManagerAuthSession, FoodManagerConnectionError, FoodManagerAuthenticationError, create_connectlife_api
 from hisense_food_manager._vendor.connectlife.api import LifeConnectAuthError, LifeConnectError
-from hisense_food_manager.const import DOMAIN, CONF_GROCY_URL, CONF_GROCY_API_KEY, CONF_CONNECTLIFE_USERNAME, CONF_CONNECTLIFE_PASSWORD
+from hisense_food_manager.const import DOMAIN, DEFAULT_GROCY_URL, CONF_GROCY_URL, CONF_GROCY_API_KEY, CONF_CONNECTLIFE_USERNAME, CONF_CONNECTLIFE_PASSWORD
 
 
 class NotReady(Exception): pass
@@ -53,13 +54,14 @@ class SetupRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 await FoodManagerAuthSession('synthetic', 'synthetic').async_login()
 
     async def test_setup_failure_then_retry_recovers_without_unknown_service(self):
-        entry = SimpleNamespace(entry_id='test', data={CONF_GROCY_URL: 'http://never.invalid', CONF_GROCY_API_KEY: 'synthetic',
+        entry = SimpleNamespace(entry_id='test', data={CONF_GROCY_URL: DEFAULT_GROCY_URL, CONF_GROCY_API_KEY: 'synthetic',
             CONF_CONNECTLIFE_USERNAME: 'synthetic', CONF_CONNECTLIFE_PASSWORD: 'synthetic'})
         hass = SimpleNamespace(data={}, services=Services(), config_entries=SimpleNamespace(async_entries=lambda domain: [entry]))
         modules = {}
         for name in ('homeassistant', 'homeassistant.helpers', 'homeassistant.helpers.aiohttp_client', 'homeassistant.helpers.storage', 'homeassistant.exceptions'):
             modules[name] = types.ModuleType(name)
-        modules['homeassistant.helpers.aiohttp_client'].async_get_clientsession = lambda hass: None
+        session_factory = Mock(return_value=None)
+        modules['homeassistant.helpers.aiohttp_client'].async_get_clientsession = session_factory
         modules['homeassistant.helpers.storage'].Store = lambda *args: object()
         modules['homeassistant.exceptions'].ConfigEntryNotReady = NotReady
         modules['homeassistant.exceptions'].ConfigEntryAuthFailed = AuthFailed
@@ -72,6 +74,7 @@ class SetupRecoveryTests(unittest.IsolatedAsyncioTestCase):
             call = SimpleNamespace(data={'shopping_list_name': 'Test'})
             self.assertEqual(await handler(call), {'available': False, 'skipped': True, 'reason': 'entry_not_ready'})
             self.assertTrue(await integration.async_setup_entry(hass, entry))
+            session_factory.assert_called_with(hass, family=socket.AF_INET)
             adaptive = SimpleNamespace(async_run=AsyncMock(return_value={'recovered': True}))
             hass.data[DOMAIN]['test']['adaptive_sync'] = adaptive
             self.assertEqual(await handler(call), {'recovered': True})
@@ -85,7 +88,7 @@ class SetupRecoveryTests(unittest.IsolatedAsyncioTestCase):
         entry = SimpleNamespace(entry_id='test', data={CONF_GROCY_URL: 'http://never.invalid', CONF_GROCY_API_KEY: 'synthetic',
             CONF_CONNECTLIFE_USERNAME: 'synthetic', CONF_CONNECTLIFE_PASSWORD: 'synthetic'})
         modules = {name: types.ModuleType(name) for name in ('homeassistant.helpers.aiohttp_client', 'homeassistant.helpers.storage', 'homeassistant.exceptions')}
-        modules['homeassistant.helpers.aiohttp_client'].async_get_clientsession = lambda hass: None
+        modules['homeassistant.helpers.aiohttp_client'].async_get_clientsession = lambda hass, **kwargs: None
         modules['homeassistant.helpers.storage'].Store = lambda *args: object()
         modules['homeassistant.exceptions'].ConfigEntryAuthFailed = AuthFailed
         auth = SimpleNamespace(async_login=AsyncMock(side_effect=FoodManagerAuthenticationError('denied')))

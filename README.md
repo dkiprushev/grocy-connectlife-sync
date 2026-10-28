@@ -71,6 +71,16 @@ must be resolved explicitly; the integration does not choose a winner for them.
 
 ## Current implementation status
 
+### Changes in 0.2.12 — default Grocy endpoint IPv4 routing
+
+Live tests found that the default `http://homeassistant.local:9192` resolves to
+the HA host's internal ULA IPv6 address, where the published Grocy port resets
+connections. The same endpoint over IPv4 returned the expected API response.
+For this exact default URL, use HA's cached IPv4 client session (TLS verification
+and HA's request protections remain unchanged). Custom URLs, including IPv6
+servers, retain normal dual-stack resolution. No global DNS/router change,
+hardcoded container IP, credential migration or blind write retry is involved.
+
 ### Changes in 0.2.11 — live nullable shopping DTO compatibility
 
 The live read-only probe after installing 0.2.10 returned an identified Android

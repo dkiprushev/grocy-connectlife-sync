@@ -4,6 +4,9 @@ from urllib.parse import urljoin
 from typing import TYPE_CHECKING
 import asyncio
 import math
+import socket
+
+from .const import DEFAULT_GROCY_URL
 
 if TYPE_CHECKING:
     import aiohttp
@@ -13,6 +16,15 @@ class GrocyError(RuntimeError):
     pass
 
 class GrocyClient:
+    @staticmethod
+    def session_family(base_url: str) -> socket.AddressFamily:
+        """HA's default published Grocy port is reachable via IPv4, not host ULA.
+
+        Limit this policy to the exact default endpoint. Custom URLs, including
+        IPv6-only servers, continue using HA's normal dual-stack resolver.
+        """
+        return socket.AF_INET if base_url.rstrip('/') == DEFAULT_GROCY_URL.rstrip('/') else socket.AF_UNSPEC
+
     def __init__(self, session: "aiohttp.ClientSession", base_url: str, api_key: str) -> None:
         self._session = session
         self._base_url = base_url.rstrip("/") + "/"

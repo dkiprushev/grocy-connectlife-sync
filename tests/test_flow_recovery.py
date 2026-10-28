@@ -21,7 +21,7 @@ class FlowRecoveryTests(unittest.IsolatedAsyncioTestCase):
         ha = types.ModuleType('homeassistant')
         ha.config_entries = SimpleNamespace(ConfigFlow=FlowBase, OptionsFlow=FlowBase)
         aio = types.ModuleType('homeassistant.helpers.aiohttp_client')
-        aio.async_get_clientsession = lambda hass: None
+        aio.async_get_clientsession = lambda hass, **kwargs: None
         self.modules = patch.dict(sys.modules, {'homeassistant': ha, 'homeassistant.helpers.aiohttp_client': aio})
         self.modules.start()
         path = Path(__file__).parents[1] / 'custom_components/hisense_food_manager/config_flow.py'

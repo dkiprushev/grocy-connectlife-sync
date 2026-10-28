@@ -46,7 +46,7 @@ class HisenseFoodManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             try:
-                client = GrocyClient(async_get_clientsession(self.hass), user_input[CONF_GROCY_URL], user_input[CONF_GROCY_API_KEY])
+                client = GrocyClient(async_get_clientsession(self.hass, family=GrocyClient.session_family(user_input[CONF_GROCY_URL])), user_input[CONF_GROCY_URL], user_input[CONF_GROCY_API_KEY])
                 await client.async_system_info()
                 auth = FoodManagerAuthSession(
                     user_input[CONF_CONNECTLIFE_USERNAME],
