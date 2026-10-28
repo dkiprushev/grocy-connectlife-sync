@@ -7,6 +7,7 @@ blueprint:
     Создание автоматизации из этого шаблона включает запись данных в обе системы.
     Подтверждённые удаления сопоставленных записей переносятся; конфликтующие изменения не разрешаются автоматически.
   domain: automation
+  source_url: https://github.com/dkiprushev/grocy-connectlife-sync/blob/main/blueprints/automation/grocy_connectlife_sync/periodic_sync.yaml
   input:
     connectlife_list:
       name: Имя списка покупок ConnectLife

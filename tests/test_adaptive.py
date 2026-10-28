@@ -19,6 +19,29 @@ class Sync:
 
 
 class AdaptiveTests(unittest.TestCase):
+    def test_long_outage_caps_attempts_and_recovery_restores_minute(self):
+        async def run():
+            now = [1000]
+            inv, shopping, store = Sync(), Sync(), Store()
+            inv.failed = shopping.failed = True
+            adaptive = AdaptiveSync(inv, shopping, store, lambda: now[0])
+            for delay in (60, 120, 300, 600, 600, 600):
+                result = await adaptive.async_run(1, "list")
+                self.assertEqual(result["inventory"]["retry_in_seconds"], delay)
+                self.assertEqual(result["shopping:1:list"]["retry_in_seconds"], delay)
+                calls = inv.calls, shopping.calls
+                now[0] += delay - 1
+                waiting = await adaptive.async_run(1, "list")
+                self.assertTrue(all(x["status"] == "waiting" for x in waiting.values()))
+                self.assertEqual((inv.calls, shopping.calls), calls)
+                now[0] += 1
+            inv.failed = shopping.failed = False
+            adaptive = AdaptiveSync(inv, shopping, store, lambda: now[0])
+            recovered = await adaptive.async_run(1, "list")
+            self.assertTrue(all(x["status"] == "ok" for x in recovered.values()))
+            self.assertTrue(all(x["retry_in_seconds"] == 60 for x in recovered.values()))
+        asyncio.run(run())
+
     def test_backoff_is_persistent_and_independent_then_recovers(self):
         async def run():
             now = [1000]

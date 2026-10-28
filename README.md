@@ -66,8 +66,8 @@ Both domains are intended to be bidirectional:
 Synchronization uses the last verified state and source identifiers to detect
 which side changed. An unambiguous deletion of a previously paired item is
 propagated; concurrent edits or changed identifiers are reported as conflicts.
-Initial matches still depend on normalized names and zones, so further live
-testing is required before unattended use.
+Initial matches still depend on normalized names and zones. Existing differences
+must be resolved explicitly; the integration does not choose a winner for them.
 
 ## Current implementation status
 
@@ -84,14 +84,35 @@ means the live round trip has not yet been safely completed.
 | Create an empty ConnectLife shopping list | Working | Confirmed in local API testing. |
 | Delete a ConnectLife shopping list | Working | Confirmed in local API testing. |
 | Rename a ConnectLife list / update a list with `purchases` | Working locally | Android authentication and signed updates have been verified with empty and populated test lists, followed by readback. |
-| ConnectLife → Grocy shopping-list import | Partially verified | HA recognised an existing item; creation of a new item remains unverified. |
+| ConnectLife → Grocy shopping-list import | Verified via HA | A new test item was imported in 0.2.5; quantity and completion updates were verified in 0.2.9. |
 | Grocy → ConnectLife shopping-list export | Verified via HA | An item was added and a repeat did not duplicate it. |
 | ConnectLife → Grocy inventory import | Verified via HA | A test item was created with its quantity in Fridge. |
-| Grocy → ConnectLife inventory export | Verified via HA | Version 0.2.3 exported the test stock and a repeated run added no duplicates. Existing entries are skipped, not updated. |
+| Grocy → ConnectLife inventory export | Verified via HA | Creation, quantity updates and repeated runs without duplicates have been verified. |
 | Grocy API reachability from Home Assistant | Verified | Snapshot and product, stock, and shopping-list write/cleanup tests passed through HA. |
-| Full automatic two-way synchronization | Not ready | It must not be presented as working until all four directions above are verified with real data and loop prevention. |
+| Paired inventory deletions | Verified via HA | Tested in both directions on 2026-10-28; stock in an unmapped Storage location survived removal from Fridge. |
+| Paired shopping deletions | Verified via HA | Both directions verified, including ConnectLife → Grocy through the adaptive action on 2026-10-28. |
+| Automatic synchronization | Ready for a supervised trial | All four exchange directions have live coverage. Retry/backoff is tested with injected failures; a real cloud outage and long-term scheduled use remain unverified. Automation is still disabled. |
 
 ## Data safety and configuration
+
+### Verification on 2026-10-28
+
+- Created separate test inventory items in Grocy and ConnectLife, then paired
+  both through the HA action. Removing the Grocy stock removed its ConnectLife
+  counterpart; deleting the other item in ConnectLife consumed its Fridge stock
+  in Grocy. Both action responses reported the exact deleted keys and no errors.
+- Five units of the same product in the unmapped `Storage` location remained;
+  product records were not deleted. The two test Fridge stocks were removed.
+- `Freezer` was found and the existing freezer pizza was imported into Grocy.
+  Nine initial inventory quantity conflicts remained unchanged (Grocy 2,
+  ConnectLife 1); the shopping Cola conflict also remains unresolved.
+- Fault tests cover persistent independent retries, repeated ten-minute retry
+  ceiling, recovery to one minute and no stock/baseline writes after a cloud
+  read timeout. These are controlled local tests, not an actual HA cloud outage.
+- The HA adaptive action returned `ok` for both domains; it propagated deletion
+  of the ConnectLife shopping test fixture into Grocy. An immediate repeat
+  returned `waiting` for both domains without another exchange.
+- The blueprint source follows `main` so future re-imports can fetch updates.
 
 ### Changes in 0.2.9
 
@@ -100,7 +121,8 @@ means the live round trip has not yet been safely completed.
 - Previously verified paired identifiers allow one-sided deletions when the
   remaining item is unchanged. Concurrent edits and changed IDs are conflicts.
   Grocy stock removal applies only to the mapped location, not the product or
-  other locations. Full HA end-to-end deletion testing is still pending.
+  other locations. Inventory deletion in both directions was subsequently
+  verified through HA on 2026-10-28.
 - Previous name-only and quantity-only baselines are migrated conservatively:
   they cannot authorize deletion until both sides have been matched again.
 - Refresh the icon and add action icons for Home Assistant.
@@ -199,8 +221,10 @@ delay. Vendor rate limits and long-term reliability are not yet verified.
 
 The blueprint does not resolve conflicts; confirmed paired deletions are
 propagated. Review existing conflicts and mapped locations before enabling it.
-Initial matching uses normalized names, and full HA deletion testing is still
-pending; do not use unattended sync for production data until verified.
+Initial matching uses normalized names. Start with supervised use and review
+the response/logs; a real cloud outage and long-term scheduled use remain
+unverified. Cloud API availability is sufficient: refrigerator power/online
+state does not gate synchronization.
 
 This repository is structured as one HACS custom integration. After it is
 published on GitHub, install it once in Home Assistant:
@@ -234,7 +258,8 @@ Credentials, API keys, exported Home Assistant config entries, `.storage`, and
 
 ## Next milestones
 
-1. Verify new-item shopping import in HA.
-2. Implement stable item matching, conflict policy, and loop prevention.
-3. Verify each direction independently before enabling scheduled automatic
-   synchronization.
+1. Resolve the initial quantity conflicts by explicitly selecting the intended
+   values in Grocy or ConnectLife; automatic conflict resolution is not provided.
+2. Observe scheduled use, recovery after an actual cloud outage and vendor rate
+   limits. A malformed or silently incomplete successful cloud snapshot remains
+   a limitation of the unofficial API.

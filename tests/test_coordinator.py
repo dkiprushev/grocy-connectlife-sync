@@ -27,6 +27,21 @@ class Side:
 
 
 class CoordinatorTests(unittest.TestCase):
+    def test_cloud_read_failure_does_not_modify_stock_or_baseline(self):
+        class Offline(Side):
+            async def async_inventory_items(self):
+                raise TimeoutError("cloud read timed out")
+        async def run():
+            left, right, store = Side(2), Offline(2), Store()
+            store.data = {"inventory": {"fridge:milk": {"quantity": 2, "grocy_id": "10:2", "connectlife_id": "20"}}}
+            before = copy.deepcopy(store.data)
+            with self.assertRaises(TimeoutError):
+                await InventoryCoordinator(left, right, store).async_sync()
+            self.assertEqual(left.quantity, 2)
+            self.assertEqual(left.writes, 0)
+            self.assertEqual(store.data, before)
+        asyncio.run(run())
+
     def test_inventory_delete_requires_matching_saved_identity(self):
         class InventorySide(Side):
             def __init__(self, quantity, identifier):
