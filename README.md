@@ -91,7 +91,7 @@ means the live round trip has not yet been safely completed.
 | Grocy API reachability from Home Assistant | Verified | Snapshot and product, stock, and shopping-list write/cleanup tests passed through HA. |
 | Paired inventory deletions | Verified via HA | Tested in both directions on 2026-10-28; stock in an unmapped Storage location survived removal from Fridge. |
 | Paired shopping deletions | Verified via HA | Both directions verified, including ConnectLife → Grocy through the adaptive action on 2026-10-28. |
-| Automatic synchronization | Ready for a supervised trial | All four exchange directions have live coverage. Retry/backoff is tested with injected failures; a real cloud outage and long-term scheduled use remain unverified. Automation is still disabled. |
+| Automatic synchronization | Enabled for supervised use | All four exchange directions have live coverage. The first scheduled HA run on 2026-10-28 returned `ok` in both domains. Retry/backoff is tested with injected failures; a real cloud outage and long-term scheduled use remain unverified. |
 
 ## Data safety and configuration
 
@@ -113,6 +113,11 @@ means the live round trip has not yet been safely completed.
   of the ConnectLife shopping test fixture into Grocy. An immediate repeat
   returned `waiting` for both domains without another exchange.
 - The blueprint source follows `main` so future re-imports can fetch updates.
+- Re-imported the blueprint through the HA interface and created the automation
+  for Grocy list 1 and ConnectLife `codex integration verified`. HA trace for
+  2026-10-28 11:20 Europe/Kiev confirms the minute trigger and `status: ok` for
+  both inventory and shopping, with no repeated additions or deletions.
+  The automation is enabled; initial quantity conflicts remain reported.
 
 ### Changes in 0.2.9
 
