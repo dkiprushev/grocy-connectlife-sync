@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 import base64
 import hashlib
 import json
+import math
 import time
 import uuid
 from datetime import date
@@ -357,7 +358,10 @@ class ConnectLifeFoodClient:
         if len(selected) != 1:
             raise ApiContractUnavailable("Choose a unique ConnectLife shopping-list name")
         rows = self._shopping_rows(selected[0])
-        return [item for row in rows if (item := self._shopping_from_row(row))]
+        items = [self._shopping_from_row(row) for row in rows]
+        if any(item is None for item in items):
+            raise ApiContractUnavailable("Incomplete ConnectLife shopping snapshot")
+        return items
 
     async def async_shopping_lists(self) -> list[dict[str, Any]]:
         """Return list metadata without exposing tokens or purchase details."""
@@ -592,7 +596,10 @@ class ConnectLifeFoodClient:
         """Return live fridge inventory, normalized for Grocy mapping."""
         data = await self._async_get(self._INVENTORY_PATH)
         rows = self._inventory_rows(data)
-        return [item for row in rows if (item := self._inventory_from_row(row))]
+        items = [self._inventory_from_row(row) for row in rows]
+        if any(item is None for item in items):
+            raise ApiContractUnavailable("Incomplete ConnectLife inventory snapshot")
+        return items
 
     async def async_change_shopping_item(self, list_name: str, purchase_id: str,
                                          *, quantity: float | None = None,
@@ -749,7 +756,7 @@ class ConnectLifeFoodClient:
             raise ApiContractUnavailable(f"ConnectLife inventory update failed: {response}")
         after = await self.async_inventory_rows()
         found = next((row for row in after if str(row.get("cusFoodId")) == str(identifier)), None)
-        if found is None or self._number(found.get("foodNum"), -1) != item.quantity:
+        if found is None or self._number(found.get("foodNum")) != item.quantity:
             raise ApiContractUnavailable(f"ConnectLife did not confirm updated quantity: {item.name}")
         return {"name": item.name, "cus_food_id": str(identifier), "quantity": item.quantity, "verified": True}
 
@@ -995,16 +1002,21 @@ class ConnectLifeFoodClient:
         if isinstance(value, list):
             return [row for child in value for row in cls._inventory_rows(child, inherited_room)]
         if not isinstance(value, dict):
-            return []
+            raise ApiContractUnavailable("Invalid ConnectLife inventory snapshot")
 
         room = value.get("roomCode", inherited_room)
         foods = value.get("fridgeFoods")
-        if isinstance(foods, list):
+        if "fridgeFoods" in value:
+            if not isinstance(foods, list) or any(not isinstance(food, dict) for food in foods):
+                raise ApiContractUnavailable("Invalid ConnectLife inventory rows")
             return [
                 {**food, "roomCode": food.get("roomCode") or room}
                 for food in foods if isinstance(food, dict)
             ]
-        return [row for child in value.values() for row in cls._inventory_rows(child, room)]
+        for key in ("fridgeRooms", "resultData", "data"):
+            if key in value:
+                return cls._inventory_rows(value[key], room)
+        raise ApiContractUnavailable("Unrecognized ConnectLife inventory snapshot")
 
     @classmethod
     def _shopping_rows(cls, value: Any) -> list[dict[str, Any]]:
@@ -1020,7 +1032,9 @@ class ConnectLifeFoodClient:
         if not isinstance(value, dict):
             return []
         purchases = value.get("purchaseDataList")
-        if isinstance(purchases, list):
+        if "purchaseDataList" in value:
+            if not isinstance(purchases, list) or any(not isinstance(row, dict) for row in purchases):
+                raise ApiContractUnavailable("Invalid ConnectLife shopping rows")
             return [
                 {
                     **purchase,
@@ -1030,14 +1044,20 @@ class ConnectLifeFoodClient:
                 for purchase in purchases
                 if isinstance(purchase, dict)
             ]
-        return [row for child in value.values() for row in cls._shopping_rows(child)]
+        for key in ("shoppingLists", "resultData", "data"):
+            if key in value:
+                return cls._shopping_rows(value[key])
+        raise ApiContractUnavailable("Missing ConnectLife purchase collection")
 
     @staticmethod
-    def _number(value: Any, default: float = 1) -> float:
+    def _number(value: Any) -> float:
         try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
+            number = float(value)
+        except (TypeError, ValueError) as err:
+            raise ApiContractUnavailable("Invalid ConnectLife quantity") from err
+        if isinstance(value, bool) or not math.isfinite(number) or number < 0:
+            raise ApiContractUnavailable("Invalid ConnectLife quantity")
+        return number
 
     @staticmethod
     def _zone(value: Any) -> FoodZone:
@@ -1062,7 +1082,7 @@ class ConnectLifeFoodClient:
         name = row.get("foodName") or row.get("cusFoodName") or row.get("commonName")
         if not isinstance(name, str) or not name.strip():
             return None
-        return ShoppingItem(name=name.strip(), quantity=cls._number(row.get("foodNum") or row.get("num")),
+        return ShoppingItem(name=name.strip(), quantity=cls._number(row.get("foodNum") if row.get("foodNum") is not None else row.get("num")),
             unit=row.get("foodUnitCode") or row.get("unitName"),
             checked=bool(row.get("collected") or row.get("checked") or str(row.get("status")) == "1"),
             vendor_id=str(row.get("purchaseId") or row.get("shoppingId") or row.get("id") or "") or None)

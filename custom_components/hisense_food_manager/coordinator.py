@@ -69,6 +69,7 @@ class InventoryCoordinator:
                             results["deleted"].append(key)
                         except Exception as err:
                             results["errors"].append({"key": key, "error": str(err)})
+                            break  # Do not continue a batch after uncertain read/write state.
                         continue
                 old_quantity = old.get("quantity") if isinstance(old, dict) else old
                 decision = reconcile(a.quantity if a else None, b.quantity if b else None,
@@ -112,6 +113,7 @@ class InventoryCoordinator:
                     results[direction].append(key)
                 except Exception as err:
                     results["errors"].append({"key": key, "error": str(err)})
+                    break
             await self.store.async_save({**stored, "inventory": baseline})
             return results
 
@@ -188,6 +190,7 @@ class ShoppingCoordinator:
                         result["deleted"].append(key)
                     except Exception as err:
                         result["errors"].append({"key": key, "error": str(err)})
+                        break
                     continue
                 decision = reconcile(ax, by, baseline=old.get("value") if old else None, has_baseline=bool(old))
                 if decision.decision == Decision.CONFLICT:
@@ -227,6 +230,7 @@ class ShoppingCoordinator:
                     result[direction].append(key)
                 except Exception as err:
                     result["errors"].append({"key": key, "error": str(err)})
+                    break
             pairs[pair_key] = baseline
             await self.store.async_save({**stored, "pairs": pairs})
             return result

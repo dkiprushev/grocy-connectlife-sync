@@ -10,8 +10,8 @@ class ConnectLifeModelTests(unittest.TestCase):
         client = ConnectLifeFoodClient(None)
         async def fake_get(path, payload=None):
             return {"shoppingLists": [
-                {"id": 1, "name": "One", "purchaseDataList": [{"cusFoodName": "Milk"}]},
-                {"id": 2, "name": "Two", "purchaseDataList": [{"cusFoodName": "Tea"}]},
+                {"id": 1, "name": "One", "purchaseDataList": [{"cusFoodName": "Milk", "foodNum": 1}]},
+                {"id": 2, "name": "Two", "purchaseDataList": [{"cusFoodName": "Tea", "foodNum": 1}]},
             ]}
         client._async_get = fake_get
         with self.assertRaises(ApiContractUnavailable):
@@ -48,8 +48,8 @@ class ConnectLifeModelTests(unittest.TestCase):
 
     def test_inventory_rows_inherit_the_enclosing_room_code(self):
         rows = ConnectLifeFoodClient._inventory_rows({"fridgeRooms": [
-            {"roomCode": "freezer", "fridgeFoods": [{"foodId": 1, "foodName": "Ice cream"}]},
-            {"roomCode": "fridge", "fridgeFoods": [{"foodId": 2, "foodName": "Milk", "roomCode": "fresh"}]},
+            {"roomCode": "freezer", "fridgeFoods": [{"foodId": 1, "foodName": "Ice cream", "foodNum": 1}]},
+            {"roomCode": "fridge", "fridgeFoods": [{"foodId": 2, "foodName": "Milk", "roomCode": "fresh", "foodNum": 1}]},
         ]})
         self.assertEqual(rows[0]["roomCode"], "freezer")
         self.assertEqual(rows[1]["roomCode"], "fresh")
@@ -74,7 +74,7 @@ class ConnectLifeModelTests(unittest.TestCase):
     def test_shopping_rows_keep_only_purchase_items(self):
         rows = ConnectLifeFoodClient._shopping_rows({"shoppingLists": [{
             "id": 12, "name": "Покупки", "purchaseDataList": [{
-                "purchaseId": 77, "cusFoodName": "Молоко", "status": 0,
+                "purchaseId": 77, "cusFoodName": "Молоко", "status": 0, "foodNum": 1,
             }],
         }]})
         self.assertEqual(rows[0]["shoppingListId"], 12)

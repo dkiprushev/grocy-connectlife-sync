@@ -555,15 +555,23 @@ class ConnectLifeApi:
             error_message = body.get("errorMessage")
             error_details = body.get("errorDetails")
             if error_code or error_message or error_details:
-                raise LifeConnectAuthError(
-                    f"Failed to login. Code: {error_code} Message: '{error_message}' Details: '{error_details}'"
+                # Gigya can return provider/rate errors inside HTTP 200. Only
+                # explicit credential rejection should trigger HA reauth.
+                try:
+                    category = int(error_code) // 1000
+                except (TypeError, ValueError):
+                    category = None
+                error_type = LifeConnectAuthError if category in (400, 401, 403) else LifeConnectError
+                raise error_type(
+                    f"Failed to login. Code: {error_code} Message: '{error_message}' Details: '{error_details}'",
+                    status=category,
                 )
 
             uid = self._require_auth_field(body, "UID")
             session_info = self._require_auth_field(body, "sessionInfo")
             if "cookieValue" not in session_info:
                 _LOGGER.debug("Missing 'sessionInfo.cookieValue' in response: %s", body)
-                raise LifeConnectAuthError("Missing 'sessionInfo.cookieValue' in response")
+                raise LifeConnectError("Missing 'sessionInfo.cookieValue' in response")
             return uid, session_info["cookieValue"]
 
     async def _fetch_jwt(self, session: aiohttp.ClientSession, login_token: str) -> str:
@@ -777,7 +785,7 @@ class ConnectLifeApi:
 
     def _require_access_token(self) -> str:
         if self._access_token is None:
-            raise LifeConnectAuthError("Missing 'access_token' in response")
+            raise LifeConnectError("Missing 'access_token' in response")
         return self._access_token
 
     # -- Gateway request signing --------------------------------------------
@@ -850,7 +858,7 @@ class ConnectLifeApi:
     def _require_auth_field(response: dict[str, Any], field: str) -> Any:
         if field not in response:
             _LOGGER.debug("Missing '%s' in response: %s", field, response)
-            raise LifeConnectAuthError(f"Missing '{field}' in response")
+            raise LifeConnectError(f"Missing '{field}' in response")
         return response[field]
 
     @staticmethod

@@ -3,6 +3,7 @@ from __future__ import annotations
 from urllib.parse import urljoin
 from typing import TYPE_CHECKING
 import asyncio
+import math
 
 if TYPE_CHECKING:
     import aiohttp
@@ -52,7 +53,30 @@ class GrocyClient:
 
     async def async_list(self, entity: str) -> list[dict]:
         data = await self._request("GET", f"/api/objects/{entity}")
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
+            raise GrocyError(f"Invalid Grocy collection: {entity}")
+        required = {"products": ("id", "name"), "locations": ("id", "name"),
+                    "quantity_units": ("id", "name"), "shopping_lists": ("id",),
+                    "shopping_list": ("id", "product_id", "amount"),
+                    "stock": ("product_id", "location_id", "amount")}.get(entity, ("id",))
+        for row in data:
+            if any(row.get(key) is None or row.get(key) == "" for key in required):
+                raise GrocyError(f"Incomplete Grocy collection: {entity}")
+            if "name" in required and (not isinstance(row["name"], str) or not row["name"].strip()):
+                raise GrocyError(f"Invalid Grocy name: {entity}")
+            if "amount" in required:
+                self._quantity(row["amount"])
+        return data
+
+    @staticmethod
+    def _quantity(value) -> float:
+        try:
+            amount = float(value)
+        except (TypeError, ValueError) as err:
+            raise GrocyError("Invalid Grocy quantity") from err
+        if isinstance(value, bool) or not math.isfinite(amount) or amount < 0:
+            raise GrocyError("Invalid Grocy quantity")
+        return amount
 
     async def async_create(self, entity: str, payload: dict) -> int:
         data = await self._request("POST", f"/api/objects/{entity}", json=payload)
@@ -124,12 +148,8 @@ class GrocyClient:
                 continue
             product_id = row.get("product_id")
             if product_id is None or int(product_id) not in product_names:
-                continue
-            amount = row.get("amount", 1)
-            try:
-                quantity = float(amount)
-            except (TypeError, ValueError):
-                quantity = 1
+                raise GrocyError("Shopping snapshot references an unknown product")
+            quantity = self._quantity(row.get("amount"))
             items.append(ShoppingItem(
                 name=product_names[int(product_id)],
                 quantity=quantity,
@@ -236,20 +256,22 @@ class GrocyClient:
             for row in locations
             if row.get("id") is not None and row.get("name") == self.location_name(zone)
         }
+        known_location_ids = {int(row["id"]) for row in locations}
         items: dict[tuple[int, int], InventoryItem] = {}
         for row in stock if isinstance(stock, list) else []:
             product_id = row.get("product_id")
             location_id = row.get("location_id")
             if product_id is None or location_id is None:
-                continue
+                raise GrocyError("Incomplete Grocy stock row")
             product = product_by_id.get(int(product_id))
             zone = zone_by_location_id.get(int(location_id))
-            if product is None or zone is None:
+            if int(location_id) not in known_location_ids:
+                raise GrocyError("Stock snapshot references an unknown location")
+            if product is None:
+                raise GrocyError("Stock snapshot references an unknown product")
+            if zone is None:
                 continue
-            try:
-                quantity = float(row.get("amount", 0))
-            except (TypeError, ValueError):
-                continue
+            quantity = self._quantity(row.get("amount"))
             if quantity <= 0:
                 continue
             key = (int(product_id), int(location_id))

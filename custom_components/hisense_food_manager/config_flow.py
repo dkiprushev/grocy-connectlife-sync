@@ -3,7 +3,7 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from .auth import FoodManagerAuthSession, FoodManagerAuthenticationError
+from .auth import FoodManagerAuthSession, FoodManagerAuthenticationError, FoodManagerConnectionError
 from .const import (
     CONF_CONNECTLIFE_PASSWORD,
     CONF_CONNECTLIFE_USERNAME,
@@ -17,6 +17,31 @@ from .grocy import GrocyClient, GrocyError
 class HisenseFoodManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
+    async def async_step_reauth(self, entry_data):
+        """Repair rejected credentials without creating another integration."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        errors = {}
+        entry = self._get_reauth_entry()
+        if user_input is not None:
+            # Keep the account fixed so existing stock baselines cannot be
+            # silently reused for a different household during reauth.
+            auth = FoodManagerAuthSession(entry.data[CONF_CONNECTLIFE_USERNAME], user_input[CONF_CONNECTLIFE_PASSWORD])
+            try:
+                await auth.async_login()
+            except FoodManagerConnectionError:
+                errors["base"] = "cannot_connect"
+            except FoodManagerAuthenticationError:
+                errors["base"] = "invalid_auth"
+            else:
+                return self.async_update_reload_and_abort(entry, data_updates=user_input)
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_CONNECTLIFE_PASSWORD): str}),
+            errors=errors,
+        )
+
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
@@ -28,7 +53,7 @@ class HisenseFoodManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input[CONF_CONNECTLIFE_PASSWORD],
                 )
                 await auth.async_login()
-            except (GrocyError, OSError):
+            except (GrocyError, OSError, FoodManagerConnectionError):
                 errors["base"] = "cannot_connect"
             except FoodManagerAuthenticationError:
                 errors["base"] = "invalid_auth"
@@ -81,6 +106,8 @@ class HisenseFoodManagerOptionsFlow(config_entries.OptionsFlow):
                     user_input[CONF_CONNECTLIFE_PASSWORD],
                 )
                 await auth.async_login()
+            except FoodManagerConnectionError:
+                errors["base"] = "cannot_connect"
             except FoodManagerAuthenticationError:
                 errors["base"] = "invalid_auth"
             else:
@@ -98,6 +125,10 @@ class HisenseFoodManagerOptionsFlow(config_entries.OptionsFlow):
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
                 if isinstance(runtime, dict):
                     runtime["auth"] = auth
+                else:
+                    # A failed setup has no runtime to replace. Updating saved
+                    # credentials alone would otherwise leave it failed.
+                    await self.hass.config_entries.async_reload(self._entry.entry_id)
                 return self.async_create_entry(title="", data={})
         return self.async_show_form(
             step_id="init",

@@ -65,7 +65,7 @@ class GrocyShoppingExportContractTest(unittest.TestCase):
         async def rows(entity):
             return {"products": [{"id": 1, "name": "Milk"}, {"id": 2, "name": "Tea"}],
                     "quantity_units": [], "shopping_list": [
-                        {"id": 5, "product_id": 1, "shopping_list_id": 1, "done": 1},
+                        {"id": 5, "product_id": 1, "shopping_list_id": 1, "done": 1, "amount": 1},
                         {"id": 6, "product_id": 2, "shopping_list_id": 2, "done": 0},
                     ]}[entity]
         client.async_list = rows

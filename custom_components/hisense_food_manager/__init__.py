@@ -4,7 +4,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from .connectlife import ConnectLifeFoodClient
-from .auth import FoodManagerAuthSession
+from .auth import FoodManagerAuthSession, FoodManagerAuthenticationError, FoodManagerConnectionError
 from .const import (CONF_GROCY_API_KEY, CONF_GROCY_URL, DOMAIN, SERVICE_PROBE_FOOD_CATALOG,
                     SERVICE_PROBE_INVENTORY, SERVICE_PROBE_SHOPPING_LIST, SERVICE_PROBE_UNITS,
                     SERVICE_GET_SHOPPING_LIST, SERVICE_GET_INVENTORY, SERVICE_GET_CATALOG, SERVICE_GET_UNITS,
@@ -33,7 +33,17 @@ if TYPE_CHECKING:
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Register ConnectLife-only services before config entries are loaded."""
+    """Register stable entry-independent services before config entries load."""
+    if not hass.services.has_service(DOMAIN, "sync_adaptive"):
+        async def sync_adaptive(call: ServiceCall) -> dict:
+            entries = hass.config_entries.async_entries(DOMAIN)
+            runtime = (hass.data.get(DOMAIN, {}).get(entries[0].entry_id, {}) if entries else {})
+            adaptive = runtime.get("adaptive_sync")
+            if adaptive is None:
+                return {"available": False, "skipped": True, "reason": "entry_not_ready"}
+            return await adaptive.async_run(
+                int(call.data.get("grocy_shopping_list_id", 1)), str(call.data["shopping_list_name"]))
+        hass.services.async_register(DOMAIN, "sync_adaptive", sync_adaptive, supports_response="only")
     if not hass.services.has_service(DOMAIN, SERVICE_TEST_CONNECTLIFE_SHOPPING_ROUNDTRIP):
         async def test_connectlife_shopping_roundtrip(call: ServiceCall) -> dict:
             return await ConnectLifeFoodClient(hass).async_test_shopping_roundtrip(
@@ -68,7 +78,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         auth = FoodManagerAuthSession(
             entry.data[CONF_CONNECTLIFE_USERNAME], entry.data[CONF_CONNECTLIFE_PASSWORD]
         )
-        await auth.async_login()
+        try:
+            await auth.async_login()
+        except FoodManagerAuthenticationError as err:
+            from homeassistant.exceptions import ConfigEntryAuthFailed
+            raise ConfigEntryAuthFailed("ConnectLife authentication failed") from err
+        except FoodManagerConnectionError as err:
+            from homeassistant.exceptions import ConfigEntryNotReady
+            raise ConfigEntryNotReady("ConnectLife temporarily unavailable") from err
         runtime["auth"] = auth
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
     runtime["inventory_coordinator"] = InventoryCoordinator(
@@ -135,10 +152,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return await hass.data[DOMAIN][entry.entry_id]["shopping_coordinator"].async_sync(
                 int(call.data.get("grocy_shopping_list_id", 1)), str(call.data["shopping_list_name"]))
         hass.services.async_register(DOMAIN, "sync_shopping_bidirectional", sync_shopping_bidirectional, supports_response="only")
-        async def sync_adaptive(call: ServiceCall) -> dict:
-            return await hass.data[DOMAIN][entry.entry_id]["adaptive_sync"].async_run(
-                int(call.data.get("grocy_shopping_list_id", 1)), str(call.data["shopping_list_name"]))
-        hass.services.async_register(DOMAIN, "sync_adaptive", sync_adaptive, supports_response="only")
         async def get_grocy_snapshot(call: ServiceCall) -> dict:
             return await grocy_client().async_snapshot()
         hass.services.async_register(DOMAIN, SERVICE_GET_GROCY_SNAPSHOT, get_grocy_snapshot, supports_response="only")
@@ -245,5 +258,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_STAGE_CONNECTLIFE_INVENTORY_ITEM)
         hass.services.async_remove(DOMAIN, "sync_inventory_bidirectional")
         hass.services.async_remove(DOMAIN, "sync_shopping_bidirectional")
-        hass.services.async_remove(DOMAIN, "sync_adaptive")
     return True

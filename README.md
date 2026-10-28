@@ -71,6 +71,38 @@ must be resolved explicitly; the integration does not choose a winner for them.
 
 ## Current implementation status
 
+### Changes in 0.2.10 — audit fixes (2026-10-28)
+
+- Reject malformed Grocy collections, missing product/location references and
+  invalid/non-finite quantities instead of silently producing empty snapshots.
+- Reject unrecognized ConnectLife inventory and missing/corrupt purchase
+  collections. Explicit empty collections remain valid; a broken read must not
+  become an instruction to propagate deletion.
+- Stop processing the remaining batch after any uncertain write/readback;
+  already confirmed records retain their saved baseline, while the failing
+  record is not acknowledged. This is not a cross-service transaction or rollback.
+- Separate temporary ConnectLife transport/provider failures from rejected
+  credentials. Setup raises HA's `ConfigEntryNotReady` for retryable failures
+  and `ConfigEntryAuthFailed` for authentication failures. Missing OAuth fields
+  are protocol failures, not proof of an incorrect password.
+- Register `sync_adaptive` before entry login. While setup is pending its
+  response is explicitly `available: false`, `skipped: true`,
+  `reason: entry_not_ready`; this is not a successful synchronization.
+- Add same-account reauthentication and reload a failed entry after credentials
+  are successfully supplied through Configure.
+- Add isolated fault tests for snapshot safety, preserved baselines and
+  startup failure/retry. These are code-level tests with mocked HA boundaries,
+  not a claim of automatic recovery verified on a running HA installation.
+
+Version 0.2.10 contains these audit fixes. Install it through HACS and restart
+Home Assistant to load the updated Python code. Code-level regression results
+do not by themselves establish live recovery; verify the entry state and fresh
+automation traces after installation.
+The retry/reauth lifecycle follows the [Home Assistant reauthentication flow](https://contributors.home-assistant.io/core/integrations/reauth-reconfigure/).
+The working washer/dryer relay itself is not faulty: the audit found a different
+transliteration in the automation's entity reference. Relay automation changes,
+external backups and the remaining audit backlog are outside this patch.
+
 The table separates observed, working API operations from the final
 bidirectional product goal. “Not verified” does not mean data was changed; it
 means the live round trip has not yet been safely completed.

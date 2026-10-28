@@ -13,6 +13,20 @@ class FoodManagerAuthenticationError(RuntimeError):
     """The Food Manager account could not be authenticated."""
 
 
+class FoodManagerConnectionError(RuntimeError):
+    """Temporary transport/provider/protocol failure; credentials not disproved."""
+
+
+def _login_error(err: Exception, message: str) -> RuntimeError:
+    from ._vendor.connectlife.api import LifeConnectAuthError
+    # A 429/5xx is never evidence of invalid credentials. Unknown provider or
+    # decoding failures also retain HA's retry path instead of requesting reauth.
+    status = getattr(err, "status", None)
+    if isinstance(err, LifeConnectAuthError) and status in (None, 400, 401, 403):
+        return FoodManagerAuthenticationError(message)
+    return FoodManagerConnectionError(message)
+
+
 def create_connectlife_api(username: str, password: str) -> Any:
     """Create a private EU gateway client, independent of other integrations."""
     from ._vendor.connectlife.api import ConnectLifeApi
@@ -31,7 +45,7 @@ class FoodManagerAuthSession:
         try:
             await self._api.login()
         except Exception as err:  # library versions expose different auth errors
-            raise FoodManagerAuthenticationError("ConnectLife login failed") from err
+            raise _login_error(err, "ConnectLife login failed") from err
 
     async def async_api(self) -> Any:
         """Return a client with a valid access token.
@@ -44,6 +58,4 @@ class FoodManagerAuthSession:
             await self._api._fetch_access_token()  # noqa: SLF001 - no public equivalent
             return self._api
         except Exception as err:  # library versions expose different auth errors
-            raise FoodManagerAuthenticationError(
-                "ConnectLife session renewal failed"
-            ) from err
+            raise _login_error(err, "ConnectLife session renewal failed") from err

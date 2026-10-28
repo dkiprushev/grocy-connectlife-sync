@@ -26,7 +26,8 @@ class _FakeApi:
 
 class _BrokenApi:
     async def login(self):
-        raise ValueError("bad credentials")
+        from hisense_food_manager._vendor.connectlife.api import LifeConnectAuthError
+        raise LifeConnectAuthError("bad credentials", status=401)
 
 
 class AuthSessionTests(unittest.TestCase):
