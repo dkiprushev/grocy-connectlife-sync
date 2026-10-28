@@ -71,6 +71,16 @@ must be resolved explicitly; the integration does not choose a winner for them.
 
 ## Current implementation status
 
+### Changes in 0.2.11 — live nullable shopping DTO compatibility
+
+The live read-only probe after installing 0.2.10 returned an identified Android
+purchase with explicit `foodNum: null`. Preserve the previous single-item
+interpretation **only** for that known nullable DTO with a `purchaseId`.
+Missing collections, unnamed rows, arbitrary missing quantities, invalid
+numbers, NaN and infinity remain errors. Explicit zero is not replaced by one.
+This fixes the overly strict shopping read introduced in 0.2.10; inventory
+quantity validation remains strict. A captured-schema regression was added.
+
 ### Changes in 0.2.10 — audit fixes (2026-10-28)
 
 - Reject malformed Grocy collections, missing product/location references and

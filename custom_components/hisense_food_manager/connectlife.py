@@ -1082,7 +1082,14 @@ class ConnectLifeFoodClient:
         name = row.get("foodName") or row.get("cusFoodName") or row.get("commonName")
         if not isinstance(name, str) or not name.strip():
             return None
-        return ShoppingItem(name=name.strip(), quantity=cls._number(row.get("foodNum") if row.get("foodNum") is not None else row.get("num")),
+        quantity = row.get("foodNum") if row.get("foodNum") is not None else row.get("num")
+        # The live Android purchase DTO uses explicit foodNum:null for legacy
+        # single purchases. Preserve the pre-0.2.10 one-item interpretation for
+        # this identified DTO only, not arbitrary missing/invalid numeric data.
+        if (quantity is None and "foodNum" in row and row["foodNum"] is None
+                and row.get("purchaseId") is not None):
+            quantity = 1
+        return ShoppingItem(name=name.strip(), quantity=cls._number(quantity),
             unit=row.get("foodUnitCode") or row.get("unitName"),
             checked=bool(row.get("collected") or row.get("checked") or str(row.get("status")) == "1"),
             vendor_id=str(row.get("purchaseId") or row.get("shoppingId") or row.get("id") or "") or None)

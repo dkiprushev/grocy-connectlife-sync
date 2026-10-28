@@ -12,6 +12,17 @@ from test_coordinator import Store
 
 
 class SnapshotSafetyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_nullable_android_purchase_compatibility(self):
+        row = {'purchaseId': 17, 'cusFoodName': 'Milk', 'status': 0, 'foodNum': None}
+        item = ConnectLifeFoodClient._shopping_from_row(row)
+        self.assertEqual((item.name, item.quantity, item.vendor_id), ('Milk', 1, '17'))
+        for malformed in ({'cusFoodName': 'Milk', 'foodNum': None},
+                          {'purchaseId': 17, 'cusFoodName': 'Milk'},
+                          {**row, 'foodNum': 'bad'}, {**row, 'foodNum': float('nan')}):
+            with self.subTest(row=malformed), self.assertRaises(ApiContractUnavailable):
+                ConnectLifeFoodClient._shopping_from_row(malformed)
+        self.assertEqual(ConnectLifeFoodClient._shopping_from_row({**row, 'foodNum': 0}).quantity, 0)
+
     async def test_malformed_grocy_collections_are_not_empty(self):
         for payload in ({}, None, {'error': 'schema'}, 'bad', [None], [{}]):
             with self.subTest(payload=payload):
