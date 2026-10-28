@@ -71,6 +71,21 @@ must be resolved explicitly; the integration does not choose a winner for them.
 
 ## Current implementation status
 
+### Changes in 0.2.13 — installable Home Assistant branding
+
+Package `brand/icon.png` and `brand/dark_icon.png` inside
+`custom_components/hisense_food_manager/`, where Home Assistant 2026.3+ reads
+local integration branding. Previously the artwork existed only at unsupported
+locations (repository root and integration root). Both themes use the existing
+256×256 artwork; synchronization behavior is unchanged. A packaging regression
+test checks paths, PNG dimensions and matching bytes.
+
+HACS 2.0.5 still requests this integration's icon from the external brands CDN,
+so its repository list can show "icon not available" even when local branding
+works in HA. This release does not patch HACS or claim to fix that separate
+frontend limitation. See [HACS issue 5402](https://github.com/hacs/integration/issues/5402)
+and [HA local branding documentation](https://contributors.home-assistant.io/blog/2026/02/24/brands-proxy-api/).
+
 ### Changes in 0.2.12 — default Grocy endpoint IPv4 routing
 
 Live tests found that the default `http://homeassistant.local:9192` resolves to
